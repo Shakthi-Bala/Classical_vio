@@ -381,32 +381,57 @@ class MSCKF(object):
         """
         """Propogate the state using 4th order Runge-Kutta for equstion (1) in "MSCKF" paper"""
         # compute norm of gyro
-        ...
+        gyro_norm = np.linalg.norm(gyro)
         
         # Get the Omega matrix, the equation above equation (2) in "MSCKF" paper
-        ...
+        Omega = np.zeros((4, 4))
+        Omega[:3, :3] = -skew(gyro)
+        Omega[:3, 3] = gyro
+        Omega[3, :3] = -gyro
+
         
         # Get the orientation, velocity, position
-        ...
-        
+        q = self.state_server.imu_state.orientation
+        v = self.state_server.imu_state.velocity
+        p = self.state_server.imu_state.position
+
         # Compute the dq_dt, dq_dt2 in equation (1) in "MSCKF" paper
-        ...
-        
+        if gyro_norm > 1e-5:
+            dq_dt = (np.cos(gyro_norm*dt/2)*np.identity(4) + 2*np.sin(gyro_norm*dt/2)/gyro_norm*Omega) @ q
+            dq_dt2 = (np.cos(gyro_norm*dt*0.25)*np.identity(4) + 2*np.sin(gyro_norm*dt*0.25)/gyro_norm*Omega) @ q
+        else:
+            dq_dt = (np.identity(4) + 0.5*Omega*dt) @ np.cos(gyro_norm*dt/2)*q
+            dq_dt2 = (np.identity(4) + 0.25*Omega*dt) @ np.cos(gyro_norm*dt*0.25)*q
+
+        dR_dt_transpose = to_rotation(dq_dt).T
+        dR_dt2_transpose = to_rotation(dq_dt2).T
         # Apply 4th order Runge-Kutta 
         # k1 = f(tn, yn)
         ...
+        k1_v_dot = to_rotation(dq_dt).T @ acc + IMUState.gravity
+        k1_p_dot = v
 
         # k2 = f(tn+dt/2, yn+k1*dt/2)
         ...
+        k1_v = v + k1_v_dot * dt/2
+        k2_v_dot = dR_dt2_transpose @ acc + IMUState.gravity
+        k2_p_dot = k1_v
         
         # k3 = f(tn+dt/2, yn+k2*dt/2)
         ...
+        k2_v = v + k2_v_dot * dt/2
+        k3_v_dot = dR_dt2_transpose @ acc + IMUState.gravity
+        k3_p_dot = k2_v
         
         # k4 = f(tn+dt, yn+k3*dt)
-        ...
+        k3v = v + k3_v_dot * dt
+        k4_v_dot = dR_dt_transpose @ acc + IMUState.gravity
+        k4_p_dot = k3v
 
         # yn+1 = yn + dt/6*(k1+2*k2+2*k3+k4)
-        ...
+        q = dq_dt
+        v = v + dt/6*(k1_v_dot + 2*k2_v_dot + 2*k3_v_dot + k4_v_dot)
+        p = p + dt/6*(k1_p_dot + 2*k2_p_dot + 2*k3_p_dot + k4_p_dot)
 
         # update the imu state
         ...
