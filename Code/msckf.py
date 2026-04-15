@@ -434,8 +434,9 @@ class MSCKF(object):
         p = p + dt/6*(k1_p_dot + 2*k2_p_dot + 2*k3_p_dot + k4_p_dot)
 
         # update the imu state
-        ...
-
+        self.state_server.imu_state.orientation = q
+        self.state_server.imu_state.velocity = v
+        self.state_server.imu_state.position = p
     
     def state_augmentation(self, time):
         """
