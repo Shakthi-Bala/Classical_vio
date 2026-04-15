@@ -446,25 +446,44 @@ class MSCKF(object):
         Compute the state covariance matrix in equation (3) in the "MSCKF" paper.
         """
         # Get the imu_state, rotation from imu to cam0, and translation from cam0 to imu
-        ...
+        R_i_c = self.state_server.imu_state.R_imu_cam0
+        t_c_i = self.state_server.imu_state.t_imu_cam0
 
         # Add a new camera state to the state server.
-        ...
+        R_w_i = to_rotation(self.state_server.imu_state.orientation)
+        R_w_c = R_i_c @ R_w_i
+        t_c_w = self.state_server.imu_state.position + R_w_i.T @ t_c_i
         
+        self.state_server.cam_states[self.state_server.imu_state.id] = CAMState(self.state_server.imu_state.id)
+        cam_state = self.state_server.cam_states[self.state_server.imu_state.id]
+
+        cam_state.timestamp = time
+        cam_state.orientation = to_quaternion(R_w_c)
+        cam_state.position = t_c_w
 
         # Update the covariance matrix of the state.
         # To simplify computation, the matrix J below is the nontrivial block
         # Appendix B of "MSCKF" paper.
-        ...
+        J = np.zeros((6, 21))
+        J[:3, :3] = R_i_c
+        J[:3, 15:18] = np.identity(3)
+        J[3:6, :3] = skew(R_w_i.T @ t_c_i)
+        J[3:6, 12:15] = np.identity(3)
+        J[3:6, 18:21] = R_w_i.T
+        
 
         # Resize the state covariance matrix.
-        ...
+        old_size = self.state_server.state_cov.shape[0]
+        state_cov = np.zeros((old_size + 6, old_size + 6))
+        state_cov[:old_size, :old_size] = self.state_server.state_cov
 
         # Fill in the augmented state covariance.
-        ...
+        state_cov[old_size:, :old_size] = J @ self.state_server.state_cov[:21, :old_size]
+        state_cov[:old_size, old_size:] = state_cov[old_size:, :old_size].T
+        state_cov[old_size:, old_size:] = J @ self.state_server.state_cov[:21, :21] @ J.T
 
         # Fix the covariance to be symmetric
-        ...
+        self.state_server.state_cov = (state_cov + state_cov.T) / 2.0
 
     def add_feature_observations(self, feature_msg):
         """
