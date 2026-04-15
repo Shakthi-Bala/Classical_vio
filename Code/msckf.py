@@ -307,29 +307,72 @@ class MSCKF(object):
         Section III.A: The dynamics of the error IMU state following equation (2) in the "MSCKF" paper.
         """
         # Get the error IMU state
-        ...
+        imu_state = self.state_server.imu_state
+        gyro = m_gyro - imu_state.gyro_bias
+        acc = m_acc - imu_state.acc_bias
+        dt = time - imu_state.timestamp
 
         # Compute discrete transition F, Q matrices in Appendix A in "MSCKF" paper
-        ...
+        F = np.zeros((21, 21))
+        G = np.zeros((21, 12))
         
         # Approximate matrix exponential to the 3rd order, which can be 
         # considered to be accurate enough assuming dt is within 0.01s.
-        ...
+
+        # F matrix
+        R_w_i = to_rotation(imu_state.orientation)
+        F[:3, :3] = -skew(gyro)
+        F[:3, 3:6] = -np.identity(3)
+        F[6:9, :3] = -R_w_i.T @ skew(acc)
+        F[6:9, 9:12] = -R_w_i.T
+        F[12:15, 6:9] = np.identity(3)
+
+        # G matrix
+        G[:3, :3] = -np.identity(3)
+        G[3:6, 3:6] = np.identity(3)
+        G[6:9, 6:9] = -R_w_i.T
+        G[9:12, 9:12] = np.identity(3)
+
+        Fdt = F * dt
+        Fdt_square = Fdt @ Fdt
+        Fdt_cube = Fdt_square @ Fdt
+        Phi = np.identity(21) + Fdt + 0.5*Fdt_square + (1/6)*Fdt_cube
 
         # Propogate the state using 4th order Runge-Kutta
         self.predict_new_state(dt, gyro, acc)
 
         # Modify the transition matrix
-        ...
+        u = R_w_i.T @ IMUState.gravity
+        s = skew(u)
 
+        # Modify F matrix to ensure the observability constraint.
+        A1 = Phi[6:9, :3]
+        w = skew(imu_state.velocity_null - imu_state.velocity) @ IMUState.gravity
+        Phi[6:9, :3] = A1 - (A1 @ u - w)[:, None] * u.T / (u @ u)
+        
+        A2 = Phi[12:15, :3]
+        w2 = skew(
+            dt * imu_state.velocity_null + imu_state.position_null -
+            imu_state.position) @ IMUState.gravity
+        Phi[12:15, :3] = A2 - (A2 @ u - w2)[:, None] * u.T / (u @ u)
         # Propogate the state covariance matrix.
-        ...
+        Q = Phi @ G @ self.state_server.continuous_noise_cov @ G.T @ Phi.T * dt
 
         # Fix the covariance to be symmetric
-        ...
+        state_cov = self.state_server.state_cov
+        state_cov[:21, :21] = (
+            Phi @ state_cov[:21, :21] @ Phi.T + Q)
+
+        if len(self.state_server.cam_states) > 0:
+            state_cov[:21, 21:] = Phi @ state_cov[:21, 21:]
+            state_cov[21:, :21] = state_cov[:21, 21:].T
         
-        # Update the state correspondes to null space.
-        ...
+        self.state_server.state_cov = (state_cov + state_cov.T) / 2.0
+
+        # Update the state corresponds to null space.
+        imu_state.orientation_null = imu_state.orientation.copy()
+        imu_state.position_null = imu_state.position.copy()
+        imu_state.velocity_null = imu_state.velocity.copy()
         
 
     def predict_new_state(self, dt, gyro, acc):
