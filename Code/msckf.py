@@ -490,13 +490,23 @@ class MSCKF(object):
         IMPLEMENT THIS!!!!!
         """
         # get the current imu state id and number of current features
-        ...
+        state_id = self.state_server.imu_state.id
+        curr_feature_num = len(self.map_server)
+        tracked_feature_num = 0
         
         # add all features in the feature_msg to self.map_server
-        ...
-
+        for feature in feature_msg.features:
+            if feature.id not in self.map_server:
+                map_feature = Feature(feature.id, self.optimization_config)
+                map_feature.observations[state_id] = np.array([
+                    feature.u0, feature.v0, feature.u1, feature.v1])
+                self.map_server[feature.id] = map_feature
+            else:
+                self.map_server[feature.id].observations[state_id] = np.array([
+                    feature.u0, feature.v0, feature.u1, feature.v1])
+                tracked_feature_num += 1
         # update the tracking rate
-        ...
+        self.tracking_rate = tracked_feature_num / curr_feature_num if curr_feature_num > 0 else 1.0
 
     def measurement_jacobian(self, cam_state_id, feature_id):
         """
