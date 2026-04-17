@@ -257,14 +257,11 @@ class MSCKF(object):
 
         # Initialize the initial orientation, so that the estimation
         # is consistent with the inertial frame.
-        ...
+        # We need to_rotation(q) @ [0,0,1] = gravity_imu_normalized so that
+        # to_rotation(q).T @ a_measured + g_world == 0 for a stationary IMU.
         gravity_imu_normalized = gravity_imu / gravity_norm
-        world_gravity_normalized = np.array([0., 0., -1.])
 
-        u = gravity_imu_normalized
-        v = world_gravity_normalized
-
-        q = from_two_vectors(u,v)
+        q = from_two_vectors(np.array([0., 0., 1.]), gravity_imu_normalized)
         self.state_server.imu_state.orientation = q
 
 
@@ -463,6 +460,8 @@ class MSCKF(object):
         cam_state.timestamp = time
         cam_state.orientation = to_quaternion(R_w_c)
         cam_state.position = t_c_w
+        cam_state.orientation_null = cam_state.orientation.copy()
+        cam_state.position_null = cam_state.position.copy()
 
         # Update the covariance matrix of the state.
         # To simplify computation, the matrix J below is the nontrivial block
