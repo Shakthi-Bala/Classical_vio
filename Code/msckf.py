@@ -247,6 +247,7 @@ class MSCKF(object):
             sum_linear_acc += imu_msg.linear_acceleration
         
         state_gyro_bias = sum_angular_vel / len(self.imu_msg_buffer)
+        self.state_server.imu_state.gyro_bias = state_gyro_bias
         gravity_imu = sum_linear_acc  / len(self.imu_msg_buffer)
         
         # Normalize the gravity and save to IMUState          
@@ -289,9 +290,10 @@ class MSCKF(object):
             if imu_time > time_bound:
                 break
 
+            self.process_model(imu_time, imu_msg.angular_velocity, imu_msg.linear_acceleration)
+            used_img_msg_cntr += 1
+
         # Set the current imu id to be the IMUState.next_id
-        self.process_model(imu_time, imu_msg.angular_velocity, imu_msg.linear_acceleration)
-        used_img_msg_cntr += 1
         # IMUState.next_id increments
         self.state_server.imu_state.id = IMUState.next_id
         IMUState.next_id += 1
@@ -373,6 +375,7 @@ class MSCKF(object):
         imu_state.orientation_null = imu_state.orientation.copy()
         imu_state.position_null = imu_state.position.copy()
         imu_state.velocity_null = imu_state.velocity.copy()
+        imu_state.timestamp = time
         
 
     def predict_new_state(self, dt, gyro, acc):
@@ -397,8 +400,8 @@ class MSCKF(object):
 
         # Compute the dq_dt, dq_dt2 in equation (1) in "MSCKF" paper
         if gyro_norm > 1e-5:
-            dq_dt = (np.cos(gyro_norm*dt/2)*np.identity(4) + 2*np.sin(gyro_norm*dt/2)/gyro_norm*Omega) @ q
-            dq_dt2 = (np.cos(gyro_norm*dt*0.25)*np.identity(4) + 2*np.sin(gyro_norm*dt*0.25)/gyro_norm*Omega) @ q
+            dq_dt = (np.cos(gyro_norm*dt/2)*np.identity(4) + np.sin(gyro_norm*dt/2)/gyro_norm*Omega) @ q
+            dq_dt2 = (np.cos(gyro_norm*dt*0.25)*np.identity(4) + np.sin(gyro_norm*dt*0.25)/gyro_norm*Omega) @ q
         else:
             dq_dt = (np.identity(4) + 0.5*Omega*dt) @ np.cos(gyro_norm*dt/2)*q
             dq_dt2 = (np.identity(4) + 0.25*Omega*dt) @ np.cos(gyro_norm*dt*0.25)*q
@@ -408,7 +411,7 @@ class MSCKF(object):
         # Apply 4th order Runge-Kutta 
         # k1 = f(tn, yn)
         ...
-        k1_v_dot = to_rotation(dq_dt).T @ acc + IMUState.gravity
+        k1_v_dot = to_rotation(q).T @ acc + IMUState.gravity
         k1_p_dot = v
 
         # k2 = f(tn+dt/2, yn+k1*dt/2)
@@ -447,7 +450,7 @@ class MSCKF(object):
         """
         # Get the imu_state, rotation from imu to cam0, and translation from cam0 to imu
         R_i_c = self.state_server.imu_state.R_imu_cam0
-        t_c_i = self.state_server.imu_state.t_imu_cam0
+        t_c_i = self.state_server.imu_state.t_cam0_imu
 
         # Add a new camera state to the state server.
         R_w_i = to_rotation(self.state_server.imu_state.orientation)
@@ -569,7 +572,6 @@ class MSCKF(object):
         u[3:] = skew(p_w - cam_state.position_null) @ IMUState.gravity
 
         H_x = A - (A @ u)[:, None] * u / (u @ u)
-        H_f = -H_x[:4, 3:6]
 
         # Compute the residual.
         r = z - np.array([*p_c0[:2]/p_c0[2], *p_c1[:2]/p_c1[2]])
@@ -646,7 +648,7 @@ class MSCKF(object):
 
         # Compute the Kalman gain.
         P = self.state_server.state_cov
-        S = H_thin @ P @ H_thin.T + self.config.onservation_noise * np.identity(H_thin.shape[0])
+        S = H_thin @ P @ H_thin.T + self.config.observation_noise * np.identity(H_thin.shape[0])
         K = np.linalg.solve(S, H_thin @ P).T
 
         # Compute the error of the state.
