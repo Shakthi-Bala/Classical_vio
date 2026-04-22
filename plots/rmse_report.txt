@@ -1,24 +1,38 @@
 
-======================================================
-  EVALUATION REPORT  (2862 frames, 73.0 m)
-======================================================
+============================================================
+  EVALUATION REPORT  [Scaramuzza IROS 2018 methodology]
+  Frames: 2862    Path length: 73.04 m
+  Umeyama scale: 1.000000
+============================================================
 
-Translation RMSE (ATE):
-  3D overall : 0.2796 m
-  X          : 0.2243 m
-  Y          : 0.1032 m
-  Z          : 0.1312 m
+ATE (Absolute Trajectory Error, Umeyama SE3 aligned):
+  RMSE 3D  : 0.1025 m
+  RMSE X   : 0.0763 m
+  RMSE Y   : 0.0588 m
+  RMSE Z   : 0.0351 m
 
-Rotation RMSE:
-  Overall    : 2.4049 deg
-  Roll       : 2.0536 deg
-  Pitch      : 0.5194 deg
-  Yaw        : 1.1387 deg
+Rotation RMSE (after Umeyama alignment):
+  Overall  : 2.4598 deg
+  Roll     : 1.9761 deg
+  Pitch    : 0.9476 deg
+  Yaw      : 1.1170 deg
 
-Scale RMSE (deviation from 1.0) : 0.097545
+Scale drift RMSE (deviation from 1.0): 0.102065
 
-RPE RMSE  (segment Δ=0.73 m):
-  Translation : 9.5500 %
-  Yaw         : 0.1808 deg
+RPE (Relative Pose Error) [Scaramuzza]:
+    L=  1.0 m :  trans 6.132 ± 3.653 %   rot 0.401 ± 0.209 deg
+    L=  2.0 m :  trans 4.423 ± 2.622 %   rot 0.604 ± 0.300 deg
+    L=  3.7 m :  trans 2.915 ± 1.534 %   rot 0.856 ± 0.423 deg
+    L=  5.0 m :  trans 2.413 ± 1.191 %   rot 1.000 ± 0.469 deg
+    L=  7.3 m :  trans 1.863 ± 0.928 %   rot 1.226 ± 0.500 deg
+    L= 10.0 m :  trans 1.412 ± 0.685 %   rot 1.475 ± 0.492 deg
+    L= 11.0 m :  trans 1.277 ± 0.628 %   rot 1.573 ± 0.523 deg
+    L= 14.6 m :  trans 0.911 ± 0.540 %   rot 1.922 ± 0.617 deg
+    L= 18.3 m :  trans 0.749 ± 0.534 %   rot 2.224 ± 0.801 deg
+    L= 20.0 m :  trans 0.746 ± 0.485 %   rot 2.330 ± 0.897 deg
+    L= 21.9 m :  trans 0.651 ± 0.422 %   rot 2.376 ± 0.840 deg
+    L= 29.2 m :  trans 0.639 ± 0.266 %   rot 2.810 ± 1.280 deg
+    L= 36.5 m :  trans 0.580 ± 0.302 %   rot 2.960 ± 1.570 deg
+    L= 50.0 m :  trans 0.567 ± 0.291 %   rot 3.304 ± 2.137 deg
 
-======================================================
+============================================================
