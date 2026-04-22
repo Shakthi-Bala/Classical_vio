@@ -1,0 +1,24 @@
+
+======================================================
+  EVALUATION REPORT  (2862 frames, 73.0 m)
+======================================================
+
+Translation RMSE (ATE):
+  3D overall : 0.2796 m
+  X          : 0.2243 m
+  Y          : 0.1032 m
+  Z          : 0.1312 m
+
+Rotation RMSE:
+  Overall    : 2.4049 deg
+  Roll       : 2.0536 deg
+  Pitch      : 0.5194 deg
+  Yaw        : 1.1387 deg
+
+Scale RMSE (deviation from 1.0) : 0.097545
+
+RPE RMSE  (segment Δ=0.73 m):
+  Translation : 9.5500 %
+  Yaw         : 0.1808 deg
+
+======================================================
