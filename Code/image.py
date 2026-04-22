@@ -106,8 +106,6 @@ class ImageProcessor(object):
         if self.is_first_img:
             self.initialize_first_frame()
             self.is_first_img = False
-            # Draw results.
-            # self.draw_features_stereo()
         else:
             # Track the feature in the previous image.
             t = time.time()
@@ -122,15 +120,12 @@ class ImageProcessor(object):
             self.prune_features()
             print('___prune_features:', time.time() - t)
             t = time.time()
-            # Draw results.
-            # self.draw_features_stereo()
-            print('___draw_features_stereo:', time.time() - t)
-            t = time.time()
 
         print('===image process elapsed:', time.time() - start, f'({stereo_msg.timestamp})')
 
+        tracked_img = self.draw_features_stereo()
         try:
-            return self.publish()
+            return self.publish(), tracked_img
         finally:
             self.cam0_prev_img_msg = self.cam0_curr_img_msg
             self.prev_features = self.curr_features
@@ -926,8 +921,7 @@ class ImageProcessor(object):
             kps1.append(cv2.KeyPoint(*feature.cam1_point, 1))
 
         img = cv2.drawMatches(img0, kps0, img1, kps1, matches, None, flags=2)
-        cv2.imshow('stereo features', img)
-        cv2.waitKey(1)
+        return img
 
 
 def skew(vec):

@@ -14,7 +14,7 @@ class GroundTruthReader(object):
         self.scaler = scaler   # convert timestamp from ns to second
         self.path = path
         self.starttime = starttime
-        self.field = namedtuple('gt_msg', ['p', 'q', 'v', 'bw', 'ba'])
+        self.field = namedtuple('gt_msg', ['timestamp', 'p', 'q', 'v', 'bw', 'ba'])
 
     def parse(self, line):
         """
