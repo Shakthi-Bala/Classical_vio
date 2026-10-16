@@ -195,7 +195,10 @@ If it won't build, quote published numbers and label them as such in the table.
 | C++ MSCKF (Python behaviour) | 0.1284 | 1.49 / 1.39 | 8.6 · 12.3 | 5.80x | |
 | C++ MSCKF (quirks fixed) | 0.0884 | | 11.3 · 14.6 | 4.41x | |
 | C++ SWO (Ceres) | 0.1013 | | 19.9 · 43.5 | 2.51x | |
-| VINS-Fusion (no loop) | 0.208 (same span) | | ~24 ms solve, 4 cores | | |
+| VINS-Fusion (no loop) | 0.208 (same span) | | ~24 ms solve, 4 cores | real time | |
+
+All 11 sequences, mean over the 10 every method completes: Python 0.390, C++ MSCKF
+fixed 0.207, C++ sliding window 0.164, VINS-Fusion 0.207 m.
 
 MH_01 numbers; all 11 sequences: README "Final comparison".
 

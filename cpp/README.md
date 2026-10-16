@@ -11,6 +11,7 @@ sliding-window back end and a ROS 2 node. Plan and status: [ROADMAP.md](ROADMAP.
 | Accuracy, 11 EuRoC sequences | Python-faithful MSCKF 0.615 m mean ATE -> **0.249 m** with the quirk fixes (0 failures) |
 | Sliding-window optimizer | **0.164 m** mean ATE on the 10 sequences it completes; fails on V2_03 |
 | ROS 2 node | real-time bag playback gives the **same trajectory as offline**; 10.9 ms end-to-end (MSCKF) |
+| vs VINS-Fusion (10 seq. all complete) | sliding window **0.164 m**, fixed MSCKF 0.207 m, VINS-Fusion 0.207 m; VINS-Fusion most robust (only one besides the MSCKF to complete V2_03) |
 
 Sections: [Phase 1 port](#results-euroc-mh_01_easy) ·
 [Profiling](#profiling-and-optimization-124---86-ms-per-frame) ·
