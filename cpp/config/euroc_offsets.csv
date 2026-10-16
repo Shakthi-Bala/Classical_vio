@@ -1,0 +1,12 @@
+sequence,offset_s,path
+MH_01_easy,40.0,/home/sbalamurugan/YourDirectoryID_p4/MH_01_easy
+MH_02_easy,32.6,/scratch/sbalamurugan/euroc/MH_02_easy
+MH_03_medium,11.7,/scratch/sbalamurugan/euroc/MH_03_medium
+MH_04_difficult,13.6,/scratch/sbalamurugan/euroc/MH_04_difficult
+MH_05_difficult,14.7,/scratch/sbalamurugan/euroc/MH_05_difficult
+V1_01_easy,1.6,/scratch/sbalamurugan/euroc/V1_01_easy
+V1_02_medium,2.0,/scratch/sbalamurugan/euroc/V1_02_medium
+V1_03_difficult,4.6,/scratch/sbalamurugan/euroc/V1_03_difficult
+V2_01_easy,1.9,/scratch/sbalamurugan/euroc/V2_01_easy
+V2_02_medium,1.8,/scratch/sbalamurugan/euroc/V2_02_medium
+V2_03_difficult,3.3,/scratch/sbalamurugan/euroc/V2_03_difficult

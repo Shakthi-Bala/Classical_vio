@@ -1,0 +1,20 @@
+# C++ builds (cpp/build, cpp/build-dev, ...)
+cpp/build*/
+.cache/
+compile_commands.json
+
+# Python
+__pycache__/
+
+# Large or regenerable results
+cpp/results/**/features_*.txt
+cpp/results/**/*.prof
+cpp/results/**/*.log
+cpp/results/ablation/*/
+cpp/results/sequences/
+cpp/results/slurm/
+cpp/results/swo_dev/
+cpp/results/backends/*/*/timing_cpp.csv
+cpp/results/backends/*/*/profile_stages.csv
+cpp/results/timing/*/features_*.txt
+cpp/results/timing/*/traj_*.txt

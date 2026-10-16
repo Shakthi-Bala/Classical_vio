@@ -1,0 +1,13 @@
+# euroc.yaml plus the Python-quirk fixes that help (README "Python quirks",
+# ablation). chi2_95 stays off: on its own it diverges on 8 of 11 sequences,
+# and with the other fixes the strict gate is still better.
+base: euroc.yaml
+
+fixes:
+  epipolar_full_dot: true
+  lm_upstream_loops: true
+  chi2_95: false
+  oc_upstream: true
+  normalize_quaternion: true
+  mask_clamp: true
+  full_precision_publish: true

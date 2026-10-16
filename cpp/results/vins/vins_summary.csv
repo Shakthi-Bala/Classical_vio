@@ -1,0 +1,12 @@
+sequence,poses,dropped,ate_full_m,ate_cropped_m,status
+MH_01_easy,1831,0,0.2527,0.2082,ok
+MH_02_easy,1510,0,0.2169,0.2141,ok
+MH_03_medium,1340,0,0.3259,0.3133,ok
+MH_04_difficult,1006,0,0.4338,0.4387,ok
+MH_05_difficult,1126,0,0.3073,0.3122,ok
+V1_01_easy,1446,0,0.1132,0.1129,ok
+V1_02_medium,845,0,0.1078,0.1070,ok
+V1_03_difficult,1064,0,0.1120,0.1128,ok
+V2_01_easy,1130,0,0.1317,0.1313,ok
+V2_02_medium,1164,0,0.1240,0.1226,ok
+V2_03_difficult,950,0,0.3180,0.3129,ok

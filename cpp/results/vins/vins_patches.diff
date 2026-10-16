@@ -1,0 +1,140 @@
+diff --git a/vins/src/rosNodeTest.cpp b/vins/src/rosNodeTest.cpp
+index 37bd75c..59b3968 100755
+--- a/vins/src/rosNodeTest.cpp
++++ b/vins/src/rosNodeTest.cpp
+@@ -10,6 +10,7 @@
+  *******************************************************/
+ 
+ #include <stdio.h>
++#include <cstdlib> // PATCH(ros2_vio): getenv
+ #include <queue>
+ #include <map>
+ #include <thread>
+@@ -28,6 +29,9 @@ queue<sensor_msgs::msg::PointCloud::ConstPtr> feature_buf;
+ queue<sensor_msgs::msg::Image::ConstPtr> img0_buf;
+ queue<sensor_msgs::msg::Image::ConstPtr> img1_buf;
+ std::mutex m_buf;
++long rx0 = 0, rx1 = 0; // PATCH(ros2_vio): received-frame counters
++long rx_imu = 0; // PATCH(ros2_vio)
++long n_dropped_pairs = 0; // PATCH(ros2_vio): frames dropped by the port's keep-up logic
+ 
+ // header: 1403715278
+ void img0_callback(const sensor_msgs::msg::Image::SharedPtr img_msg)
+@@ -35,6 +39,9 @@ void img0_callback(const sensor_msgs::msg::Image::SharedPtr img_msg)
+     m_buf.lock();
+     // std::cout << "Left : " << img_msg->header.stamp.sec << "." << img_msg->header.stamp.nanosec << endl;
+     img0_buf.push(img_msg);
++    // PATCH(ros2_vio): count received frames to detect DDS-level drops
++    rx0++;
++    if (rx0 % 500 == 0) { printf("[rx] cam0 received %ld frames, buf=%zu, stamp=%u.%09u\n", rx0, img0_buf.size(), img_msg->header.stamp.sec, img_msg->header.stamp.nanosec); fflush(stdout); }
+     m_buf.unlock();
+ }
+ 
+@@ -43,6 +50,9 @@ void img1_callback(const sensor_msgs::msg::Image::SharedPtr img_msg)
+     m_buf.lock();
+     // std::cout << "Right: " << img_msg->header.stamp.sec << "." << img_msg->header.stamp.nanosec << endl;
+     img1_buf.push(img_msg);
++    // PATCH(ros2_vio): count received frames to detect DDS-level drops
++    rx1++;
++    if (rx1 % 500 == 0) { printf("[rx] cam1 received %ld frames, buf=%zu, stamp=%u.%09u\n", rx1, img1_buf.size(), img_msg->header.stamp.sec, img_msg->header.stamp.nanosec); fflush(stdout); }
+     m_buf.unlock();
+ }
+ 
+@@ -106,10 +116,15 @@ void sync_process()
+                     image1 = getImageFromMsg(img1_buf.front());
+                     img1_buf.pop();
+                     // Drop old buffered frames to keep up with real-time
+-                    while(img0_buf.size() > 1 && img1_buf.size() > 1)
++                    // PATCH(ros2_vio): port-specific (not in upstream VINS-Fusion). Count drops, and allow
++                    // disabling with env VINS_NO_FRAME_DROP=1 to get upstream (process-every-frame) behaviour.
++                    static const bool no_drop = (getenv("VINS_NO_FRAME_DROP") != nullptr && std::string(getenv("VINS_NO_FRAME_DROP")) == "1");
++                    while(!no_drop && img0_buf.size() > 1 && img1_buf.size() > 1)
+                     {
+                         img0_buf.pop();
+                         img1_buf.pop();
++                        n_dropped_pairs++;
++                        if (n_dropped_pairs % 10 == 1) { printf("[drop] dropped %ld stereo pairs so far (t=%.3f)\n", n_dropped_pairs, time); fflush(stdout); }
+                     }
+                 }
+             }
+@@ -149,6 +164,7 @@ void sync_process()
+ void imu_callback(const sensor_msgs::msg::Imu::SharedPtr imu_msg)
+ {
+     // std::cout << "IMU cb" << std::endl;
++    rx_imu++; // PATCH(ros2_vio)
+ 
+     double t = imu_msg->header.stamp.sec + imu_msg->header.stamp.nanosec * (1e-9);
+     double dx = imu_msg->linear_acceleration.x;
+@@ -273,18 +289,25 @@ int main(int argc, char **argv)
+     registerPub(n);
+ 
+ 
++    // PATCH(ros2_vio): the port subscribed with SensorDataQoS (BEST_EFFORT, depth 5 for images). With bag playback
++    // that loses large image messages in bursts (seen: 902 of 7364 frames lost on an ASL-built MH_01 bag). Upstream ROS1
++    // VINS-Fusion used TCPROS (lossless) with queue 100/2000, so default to RELIABLE here. VINS_SENSOR_QOS_BEST_EFFORT=1 restores the port's QoS.
++    const bool be = (getenv("VINS_SENSOR_QOS_BEST_EFFORT") != nullptr && std::string(getenv("VINS_SENSOR_QOS_BEST_EFFORT")) == "1");
++    rclcpp::QoS imu_qos = be ? rclcpp::QoS(rclcpp::SensorDataQoS().keep_last(2000)) : rclcpp::QoS(rclcpp::KeepLast(2000)).reliable();
++    rclcpp::QoS img_qos = be ? rclcpp::QoS(rclcpp::SensorDataQoS()) : rclcpp::QoS(rclcpp::KeepLast(100)).reliable();
++    printf("[qos] sensor subscriptions: %s\n", be ? "BEST_EFFORT (port default SensorDataQoS)" : "RELIABLE (imu depth 2000, images depth 100)");
+     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu = NULL;
+     if(USE_IMU)
+     {
+-        sub_imu = n->create_subscription<sensor_msgs::msg::Imu>(IMU_TOPIC, rclcpp::SensorDataQoS().keep_last(2000), imu_callback);
++        sub_imu = n->create_subscription<sensor_msgs::msg::Imu>(IMU_TOPIC, imu_qos, imu_callback);
+     }
+     auto sub_feature = n->create_subscription<sensor_msgs::msg::PointCloud>("/feature_tracker/feature", rclcpp::QoS(rclcpp::KeepLast(2000)), feature_callback);
+-    auto sub_img0 = n->create_subscription<sensor_msgs::msg::Image>(IMAGE0_TOPIC, rclcpp::SensorDataQoS(), img0_callback);
++    auto sub_img0 = n->create_subscription<sensor_msgs::msg::Image>(IMAGE0_TOPIC, img_qos, img0_callback);
+ 
+     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_img1 = NULL;
+     if(STEREO)
+     {
+-        sub_img1 = n->create_subscription<sensor_msgs::msg::Image>(IMAGE1_TOPIC, rclcpp::SensorDataQoS(), img1_callback);
++        sub_img1 = n->create_subscription<sensor_msgs::msg::Image>(IMAGE1_TOPIC, img_qos, img1_callback);
+     }
+ 
+     auto sub_restart = n->create_subscription<std_msgs::msg::Bool>("/vins_restart", rclcpp::QoS(rclcpp::KeepLast(100)), restart_callback);
+@@ -292,9 +315,27 @@ int main(int argc, char **argv)
+     auto sub_cam_switch = n->create_subscription<std_msgs::msg::Bool>("/vins_cam_switch", rclcpp::QoS(rclcpp::KeepLast(100)), cam_switch_callback);
+ 
+     std::thread sync_thread{sync_process};
+-    rclcpp::executors::MultiThreadedExecutor executor;
+-    executor.add_node(n);
+-    executor.spin();
++    // PATCH(ros2_vio): the port used a default MultiThreadedExecutor, which spawns std::thread::hardware_concurrency()
++    // threads (~190 on our 192-core nodes even inside a 4-CPU cgroup). With bag playback that executor repeatedly
++    // stopped receiving any messages ~3 s after VINS initialisation (all executor threads idle, gdb-verified), on most
++    // compute nodes. Upstream ROS1 used ros::spin() (single-threaded), so default to a SingleThreadedExecutor;
++    // VINS_EXECUTOR_THREADS=N (N>1) selects a MultiThreadedExecutor with N threads, 0 = port behaviour (all cores).
++    const char *et = getenv("VINS_EXECUTOR_THREADS");
++    const int n_exec = et ? atoi(et) : 1;
++    printf("[exec] %s executor, threads=%d\n", n_exec == 1 ? "SingleThreaded" : "MultiThreaded", n_exec); fflush(stdout);
++    if (n_exec == 1)
++    {
++        rclcpp::executors::SingleThreadedExecutor executor;
++        executor.add_node(n);
++        executor.spin();
++    }
++    else
++    {
++        rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), n_exec > 1 ? (size_t)n_exec : 0);
++        executor.add_node(n);
++        executor.spin();
++    }
++    printf("[rx] FINAL cam0 received %ld, cam1 received %ld, dropped pairs %ld, estimator inputImageCnt %d, imu received %ld\n", rx0, rx1, n_dropped_pairs, estimator.inputImageCnt, rx_imu); fflush(stdout); // PATCH(ros2_vio)
+ 
+     return 0;
+ }
+diff --git a/vins/src/utility/visualization.cpp b/vins/src/utility/visualization.cpp
+index 8146f19..4789e89 100755
+--- a/vins/src/utility/visualization.cpp
++++ b/vins/src/utility/visualization.cpp
+@@ -167,7 +167,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::msg::Header &header
+         ofstream foutC(VINS_RESULT_PATH, ios::app);
+         foutC.setf(ios::fixed, ios::floatfield);
+         foutC.precision(0);
+-        foutC << header.stamp.sec + header.stamp.nanosec * (1e-9) << ",";
++        foutC << (static_cast<int64_t>(header.stamp.sec) * 1000000000LL + static_cast<int64_t>(header.stamp.nanosec)) << ","; // PATCH(ros2_vio): write ns like upstream; port wrote sec with precision(0) => integer seconds
+         foutC.precision(5);
+         foutC << estimator.Ps[WINDOW_SIZE].x() << ","
+               << estimator.Ps[WINDOW_SIZE].y() << ","
