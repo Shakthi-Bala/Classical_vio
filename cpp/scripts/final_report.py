@@ -33,6 +33,31 @@ SERIES = [
 DIVERGED = at.DIVERGED_M
 
 
+RPE_LENGTH = 10.0   # [m] segment length for the relative pose error
+
+
+def rpe(gt, traj_path, t_min=None, length=RPE_LENGTH):
+    """Mean RPE over all segments of `length` metres (Code/evaluate.py's
+    compute_rpe, Scaramuzza): (translation [%], rotation [deg]) or None."""
+    from evaluate import compute_rpe, interpolate_gt
+    from scipy.spatial.transform import Rotation
+    if not os.path.exists(traj_path):
+        return None
+    d = np.atleast_2d(np.loadtxt(traj_path))
+    if t_min is not None:
+        d = d[d[:, 0] >= t_min]
+    gt_t, gt_p, gt_q = gt
+    d = d[(d[:, 0] >= gt_t[0]) & (d[:, 0] <= gt_t[-1])]
+    if len(d) < 10:
+        return None
+    gt_pos, gt_rot = interpolate_gt(gt_t, gt_p, gt_q, d[:, 0])
+    est_rot = Rotation.from_quat(d[:, 4:8]).as_matrix()
+    out = compute_rpe(gt_pos, gt_rot, d[:, 1:4], est_rot, [length])[length]
+    if len(out['trans']) == 0:
+        return None
+    return float(np.mean(out['trans'])), float(np.mean(out['rot']))
+
+
 def plot_trajectory(seq, path, out):
     """Top view of one sequence: ground truth and each run, SE3-aligned."""
     from evaluate import interpolate_gt, umeyama_alignment
@@ -71,7 +96,7 @@ def main():
     parser.add_argument('--vins', default='results/vins/vins_{seq}_tum.txt')
     args = parser.parse_args()
 
-    rows = []
+    rows, rpe_rows = [], []
     with open('config/euroc_offsets.csv') as f:
         sequences = list(csv.DictReader(f))
     for s in sequences:
@@ -86,6 +111,17 @@ def main():
         vins_path = args.vins.format(seq=seq)
         if seq == 'MH_01_easy' and not os.path.exists(vins_path):
             vins_path = 'results/vins/vins_MH_01_easy_tum.txt'
+        paths = {
+            'Python': None if crashed else f'{py_dir}/traj_python.txt',
+            'MSCKF = Python': f'results/ablation/{seq}/baseline/traj_cpp.txt',
+            'MSCKF fixed': f'results/backends/msckf/{seq}/traj_cpp.txt',
+            'SWO': f'results/backends/swo/{seq}/traj_cpp.txt',
+            'VINS-Fusion': vins_path,
+        }
+        rpe_row = {'sequence': seq}
+        for col, tp in paths.items():
+            rpe_row[col] = None if tp is None else rpe(gt, tp, t_min if col == 'VINS-Fusion' else None)
+        rpe_rows.append(rpe_row)
         rows.append({
             'sequence': seq,
             'Python': None if crashed else at.ate(gt, f'{py_dir}/traj_python.txt'),
@@ -147,7 +183,29 @@ def main():
     if common:
         lines.append(f'| mean, {len(common)} seq. all completed | ' +
                      ' | '.join(f"{np.mean([r[c] for r in common]):.3f}" for c in cols) + ' |')
+    # RPE table: translation [%] / rotation [deg] over 10 m segments; diverged
+    # runs (ATE above the threshold) are reported as failures.
+    lines += ['', f'| RPE @ {RPE_LENGTH:.0f} m [% / deg] | ' + ' | '.join(cols) + ' |',
+              '|---' * (len(cols) + 1) + '|']
+    for r, a in zip(rpe_rows, rows):
+        cells = []
+        for c in cols:
+            v = r[c]
+            cells.append('fail' if v is None or not good(a, c) else f'{v[0]:.2f} / {v[1]:.2f}')
+        lines.append(f"| {r['sequence']} | " + ' | '.join(cells) + ' |')
+    common_idx = [i for i, a in enumerate(rows) if all(good(a, c) for c in cols)]
+    if common_idx:
+        lines.append(f'| mean, {len(common_idx)} seq. all completed | ' + ' | '.join(
+            f"{np.mean([rpe_rows[i][c][0] for i in common_idx]):.2f} / "
+            f"{np.mean([rpe_rows[i][c][1] for i in common_idx]):.2f}" for c in cols) + ' |')
     open('results/final/summary.md', 'w').write('\n'.join(lines) + '\n')
+    with open('results/final/rpe_table.csv', 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['sequence'] + [f'{c} trans%' for c in cols] + [f'{c} rot_deg' for c in cols])
+        for r, a in zip(rpe_rows, rows):
+            w.writerow([r['sequence']] +
+                       [f'{r[c][0]:.3f}' if r[c] and good(a, c) else '' for c in cols] +
+                       [f'{r[c][1]:.3f}' if r[c] and good(a, c) else '' for c in cols])
     mh05 = next(s for s in sequences if s['sequence'] == 'MH_05_difficult')
     plot_trajectory('MH_05_difficult', mh05['path'], 'results/final/traj_MH_05_difficult.png')
     print('\n'.join(lines))

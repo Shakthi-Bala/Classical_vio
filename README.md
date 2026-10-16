@@ -1,5 +1,36 @@
-# Classical_vio
-# Stereo MSCKF — Visual-Inertial Odometry
+# Stereo Visual-Inertial Odometry: Python → C++17 (MSCKF + Ceres sliding window + ROS 2)
+
+![demo](cpp/results/final/demo_mh05.gif)
+
+A stereo MSCKF written in Python, then **rebuilt in C++17** and taken further:
+
+- **Verified port**: the C++ filter matches the Python to **1e-9 m** on identical input; the
+  front end produces identical features on every frame.
+- **4x faster, 5.8x real time on one core** after profiling (stage timers + sampling
+  profiler + flame graphs; e.g. 10 image-pyramid builds per frame for 3 images became 3).
+- **8 inherited bugs isolated by ablation** on 11 EuRoC sequences: fixing them cuts mean
+  trajectory error **0.615 → 0.249 m** with zero failures.
+- **Ceres sliding-window optimizer** written from scratch (IMU preintegration, inverse-depth
+  stereo landmarks, Schur-complement marginalization, analytic Jacobians, 16 unit tests):
+  the **most accurate** method in the comparison.
+- **ROS 2 node** whose real-time output is identical to the offline run, **9.8 ms
+  end-to-end**; benchmarked against **VINS-Fusion** on the same data and metric.
+
+| 10 EuRoC sequences | mean ATE | mean RPE @ 10 m | latency / frame |
+|---|---|---|---|
+| Python MSCKF | 0.390 m | 2.89 % | 35 ms (offline) |
+| **C++ MSCKF** | 0.207 m | 1.68 % | **9.8 ms**, 1 core |
+| **C++ sliding window** | **0.164 m** | **1.47 %** | 19.1 ms, 1 core |
+| VINS-Fusion (no loop closure) | 0.207 m | 2.29 % | 61 ms, 4 cores |
+
+**→ Full write-up, plots and how to reproduce: [`cpp/README.md`](cpp/README.md)**
+· Code: [`cpp/`](cpp) (C++17) · original Python: [`Code/`](Code)
+
+---
+
+## Original Python implementation
+
+### Stereo MSCKF — Visual-Inertial Odometry (Python)
 
 
 MSCKF (Multi-State Constraint Kalman Filter) is an EKF-based **tightly-coupled**

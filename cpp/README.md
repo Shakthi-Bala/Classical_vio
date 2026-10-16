@@ -1,17 +1,27 @@
-# Stereo visual-inertial odometry in C++17: MSCKF and sliding-window optimizer
+# Stereo visual-inertial odometry in C++17: MSCKF filter + Ceres sliding-window optimizer
 
-C++17 / Eigen / OpenCV / Ceres port of the Python S-MSCKF in [`../Code`](../Code),
-checked module by module against the Python, then extended with a Ceres
-sliding-window back end and a ROS 2 node. Plan and status: [ROADMAP.md](ROADMAP.md).
+![demo](results/final/demo_mh05.gif)
 
-| What | Result |
+*The C++ VIO on EuRoC MH_05_difficult (6x speed): stereo feature tracks from the front
+end (left, colour = track age, contrast-enhanced for display) and the estimated
+trajectories against ground truth (right). Rendered by
+[`scripts/make_demo_gif.py`](scripts/make_demo_gif.py) from the run's own outputs.*
+
+A C++17 / Eigen / OpenCV / Ceres reimplementation of a Python stereo MSCKF
+([`../Code`](../Code)), verified module by module against the Python, profiled and
+optimized, then extended with a sliding-window optimizer and a ROS 2 node, and
+benchmarked against VINS-Fusion on all 11 EuRoC sequences. Plan: [ROADMAP.md](ROADMAP.md).
+
+| | Result |
 |---|---|
-| Port fidelity | C++ filter = Python filter to **1e-9 m** on identical input; identical features on all 2882 frames |
-| Speed (MH_01, one core) | **8.6 ms/frame, 5.8x real time** (Python: 34.5 ms, 1.45x), after profiling-driven optimization |
-| Accuracy, 11 EuRoC sequences | Python-faithful MSCKF 0.615 m mean ATE -> **0.249 m** with the quirk fixes (0 failures) |
-| Sliding-window optimizer | **0.164 m** mean ATE on the 10 sequences it completes; fails on V2_03 |
-| ROS 2 node | real-time bag playback gives the **same trajectory as offline**; 10.9 ms end-to-end (MSCKF) |
-| vs VINS-Fusion (10 seq. all complete) | sliding window **0.164 m**, fixed MSCKF 0.207 m, VINS-Fusion 0.207 m; VINS-Fusion most robust (only one besides the MSCKF to complete V2_03) |
+| **Port fidelity** | C++ filter = Python filter to **1e-9 m** on identical input; identical features on all 2882 frames |
+| **Speed** | **8.6 ms/frame, 5.8x real time on one core** (Python 34.5 ms); profiling-driven, output unchanged |
+| **Bugs found** | 8 inherited quirks isolated by ablation; fixing them cuts mean ATE **0.615 -> 0.249 m** over 11 sequences, 0 failures |
+| **Sliding window (Ceres)** | IMU preintegration, inverse-depth stereo landmarks, Schur-complement marginalization, analytic Jacobians: **most accurate**, 0.164 m mean ATE / 1.47 % RPE |
+| **ROS 2 node** | real-time bag playback reproduces the offline trajectory exactly; **9.8 ms end-to-end** (MSCKF) |
+| **vs VINS-Fusion** | same 10 sequences: sliding window 0.164 m, C++ MSCKF 0.207 m, VINS-Fusion 0.207 m at 61 ms latency (4 cores); VINS-Fusion is the most robust (V2_03) |
+
+![accuracy vs latency](results/final/accuracy_vs_latency.png)
 
 Sections: [Phase 1 port](#results-euroc-mh_01_easy) ·
 [Profiling](#profiling-and-optimization-124---86-ms-per-frame) ·
@@ -183,13 +193,19 @@ above.
   poses and the same ATE as `main_euroc`** (0.0884 m MSCKF, 0.1013 m sliding window;
   positions within 1e-4 m, the difference being OpenCV 4.13 / Eigen 5 in the ROS env).
 
-| MH_01, ROS 2, real-time playback, 1 core | process mean / p95 | end to end mean / p95 |
+| MH_01, ROS 2, real-time playback, same node (compute-3-03) | process mean / p95 | end to end mean / p95 |
 |---|---|---|
-| MSCKF | 10.3 / 13.1 ms | 10.9 / 14.2 ms |
-| Sliding window | 19.2 / 38.0 ms | 22.1 / 38.9 ms |
+| C++ MSCKF | 9.4 / 12.2 ms | 9.8 / 13.2 ms |
+| C++ sliding window | 18.7 / 39.3 ms | 19.1 / 39.4 ms |
+| VINS-Fusion (4 cores, its own threads) | - | 61.0 / 202 ms |
 
 End to end = from the arrival of the later image of a pair to the published odometry
-(includes DDS delivery and queueing). Run it with
+(includes DDS delivery and queueing). VINS-Fusion's is measured from a `ros2 bag record`
+of its odometry and the IMU topic during the same kind of run
+([`scripts/vins_latency.py`](scripts/vins_latency.py)): pose receive time minus the
+receive time of the IMU sample with the pose's timestamp; it includes the time frames
+wait in VINS-Fusion's internal buffers. (On the slower compute-2 nodes VINS-Fusion falls
+behind real time: on compute-2-06 the same run needed 390 s after the bag ended.) Run it with
 [`ros2/run_euroc_bag.sh`](ros2/run_euroc_bag.sh) (environment: see below).
 
 ## Final comparison (11 EuRoC sequences)
@@ -212,10 +228,28 @@ End to end = from the arrival of the later image of a pair to the published odom
 | failures | 1 | 0 | 0 | 1 | 0 |
 | mean, 10 seq. all completed | 0.390 | 0.423 | 0.207 | 0.164 | 0.207 |
 
+| RPE @ 10 m [% / deg] | Python | MSCKF = Python | MSCKF fixed | SWO | VINS-Fusion |
+|---|---|---|---|---|---|
+| MH_01_easy | 1.48 / 1.41 | 1.49 / 1.39 | 1.07 / 1.02 | 0.95 / 0.87 | 2.05 / 0.93 |
+| MH_02_easy | 3.37 / 2.91 | 4.58 / 3.04 | 1.87 / 0.98 | 0.61 / 0.47 | 2.19 / 0.91 |
+| MH_03_medium | 1.96 / 0.74 | 1.96 / 0.74 | 1.86 / 0.93 | 1.54 / 0.75 | 2.55 / 0.71 |
+| MH_04_difficult | 7.50 / 2.88 | 6.80 / 3.25 | 2.89 / 1.20 | 1.61 / 0.81 | 4.30 / 0.89 |
+| MH_05_difficult | 2.97 / 1.98 | 3.13 / 2.07 | 1.99 / 1.00 | 1.39 / 0.90 | 3.86 / 0.90 |
+| V1_01_easy | 3.51 / 6.89 | 3.56 / 6.19 | 2.38 / 3.46 | 2.32 / 2.93 | 2.65 / 3.01 |
+| V1_02_medium | 1.55 / 1.54 | 1.55 / 1.54 | 1.25 / 1.10 | 1.23 / 1.00 | 1.56 / 0.88 |
+| V1_03_difficult | 2.89 / 4.34 | 2.89 / 4.34 | 1.70 / 1.91 | 2.28 / 2.50 | 1.33 / 2.59 |
+| V2_01_easy | 2.38 / 2.91 | 2.11 / 2.92 | 0.95 / 0.86 | 1.61 / 1.99 | 1.30 / 2.75 |
+| V2_02_medium | 1.31 / 2.05 | 1.31 / 2.05 | 0.87 / 1.16 | 1.14 / 1.70 | 1.14 / 2.18 |
+| V2_03_difficult | fail | 9.99 / 4.52 | 5.17 / 1.30 | fail | 1.51 / 1.81 |
+| mean, 10 seq. all completed | 2.89 / 2.77 | 2.94 / 2.75 | 1.68 / 1.36 | 1.47 / 1.39 | 2.29 / 1.57 |
+
+RPE = Scaramuzza relative pose error over all 10 m segments (`Code/evaluate.py`'s
+`compute_rpe`), translation drift in % / rotation in degrees.
+
 What it shows:
-- **The C++ sliding window is the most accurate** where it works: mean 0.164 m on the
-  10 sequences all methods complete, against 0.207 m for both the fixed MSCKF and
-  VINS-Fusion. It wins clearly on the Machine Hall sequences (MH_02 0.08 m, MH_05 0.18 m).
+- **The C++ sliding window is the most accurate** where it works: mean 0.164 m ATE and
+  1.47 % RPE on the 10 sequences all methods complete, against 0.207 m / 1.68 % (fixed
+  MSCKF) and 0.207 m / 2.29 % (VINS-Fusion). It wins clearly on the Machine Hall sequences (MH_02 0.08 m, MH_05 0.18 m).
 - **VINS-Fusion is the most robust**: it completes V2_03 at 0.31 m (our MSCKF 0.68 m,
   our sliding window diverges) and is best on V1_03. It has two things ours lacks: a
   visual-inertial initialization that does not assume a static start, and failure
