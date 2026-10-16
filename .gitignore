@@ -8,3 +8,7 @@ compile_commands.json
 # Python
 __pycache__/
 *.pyc
+
+# Large or regenerable result files
+cpp/results/**/features_*.txt
+cpp/results/**/run.log
