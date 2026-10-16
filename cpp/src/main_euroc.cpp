@@ -252,10 +252,10 @@ int main(int argc, char** argv) {
     if (swo != nullptr) {
       const auto& st = swo->stats();
       std::printf("sliding window: %ld frames, %ld keyframes, %ld marginalizations, "
-                  "%.1f landmarks per solve, %ld outlier landmarks removed\n",
+                  "%.1f landmarks per solve, %ld outlier landmarks removed, %ld resets\n",
                   st.frames, st.keyframes, st.marginalizations,
                   st.keyframes > 1 ? double(st.landmarks_optimized) / (st.keyframes - 1) : 0.0,
-                  st.outliers_removed);
+                  st.outliers_removed, st.resets);
     }
 
     // Per-stage breakdown (inclusive times; "*" = called from several stages).

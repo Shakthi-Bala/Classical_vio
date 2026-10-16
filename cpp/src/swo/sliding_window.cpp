@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <set>
 
 #include <ceres/problem.h>
@@ -32,6 +33,11 @@ SlidingWindowEstimator::SlidingWindowEstimator(const Config& config)
 
   // Robust loss on whitened residuals (1 unit = pixel_sigma pixels).
   huber_ = std::make_unique<ceres::HuberLoss>(sc_.huber_px / sc_.pixel_sigma);
+  if (!sc_.debug_log.empty()) {
+    debug_log_.open(sc_.debug_log);
+    debug_log_ << "t,landmarks,initial_cost,final_cost,iterations,dp_vs_imu,dv_vs_imu,"
+                  "speed,outliers_removed\n";
+  }
 }
 
 SlidingWindowEstimator::~SlidingWindowEstimator() = default;
@@ -99,12 +105,6 @@ void SlidingWindowEstimator::integrate_imu_until(double t) {
 }
 
 void SlidingWindowEstimator::initialize_first_keyframe(const FeatureMsg& msg) {
-  auto kf = std::make_unique<KeyFrame>();
-  kf->id = next_kf_id_++;
-  kf->timestamp = msg.timestamp;
-  kf->orientation() = q_init_;
-  kf->gyro_bias() = gyro_bias_init_;
-
   // Discard IMU samples up to the first frame; remember the latest one.
   size_t used = 0;
   for (const ImuMsg& m : imu_buffer_) {
@@ -118,9 +118,30 @@ void SlidingWindowEstimator::initialize_first_keyframe(const FeatureMsg& msg) {
   imu_buffer_.erase(imu_buffer_.begin(), imu_buffer_.begin() + used);
   last_imu_t_ = msg.timestamp;
 
+  start_window(msg, Eigen::Vector3d::Zero(), q_init_, Eigen::Vector3d::Zero(),
+               Eigen::Vector3d::Zero(), gyro_bias_init_, sc_.init_pos_sigma, sc_.init_rot_sigma);
+}
+
+void SlidingWindowEstimator::start_window(const FeatureMsg& msg, const Eigen::Vector3d& p,
+                                          const Eigen::Quaterniond& q, const Eigen::Vector3d& v,
+                                          const Eigen::Vector3d& ba, const Eigen::Vector3d& bg,
+                                          double pos_sigma, double rot_sigma) {
+  window_.clear();
+  landmarks_.clear();
+  marg_prior_.reset();
+
+  auto kf = std::make_unique<KeyFrame>();
+  kf->id = next_kf_id_++;
+  kf->timestamp = msg.timestamp;
+  kf->position() = p;
+  kf->orientation() = q.normalized();
+  kf->velocity() = v;
+  kf->acc_bias() = ba;
+  kf->gyro_bias() = bg;
+
   Eigen::Matrix<double, 15, 1> sigma;
-  sigma << Eigen::Vector3d::Constant(sc_.init_pos_sigma),
-      Eigen::Vector3d::Constant(sc_.init_rot_sigma), Eigen::Vector3d::Constant(sc_.init_vel_sigma),
+  sigma << Eigen::Vector3d::Constant(pos_sigma),
+      Eigen::Vector3d::Constant(rot_sigma), Eigen::Vector3d::Constant(sc_.init_vel_sigma),
       Eigen::Vector3d::Constant(sc_.init_acc_bias_sigma),
       Eigen::Vector3d::Constant(sc_.init_gyro_bias_sigma);
   init_prior_.reset(StatePriorFactor::create(kf->position(), kf->orientation(),
@@ -154,6 +175,15 @@ void SlidingWindowEstimator::add_observations(KeyFrame& kf, const FeatureMsg& ms
     }
     kf.obs[f.id] = z;
   }
+}
+
+int SlidingWindowEstimator::tracked_from_last_keyframe(const FeatureMsg& msg) const {
+  const KeyFrame& last = *window_.back();
+  int tracked = 0;
+  for (const FeatureMeasurement& f : msg.features) {
+    tracked += static_cast<int>(last.obs.count(f.id));
+  }
+  return tracked;
 }
 
 bool SlidingWindowEstimator::is_keyframe(const FeatureMsg& msg) const {
@@ -220,11 +250,11 @@ void SlidingWindowEstimator::landmark_factors(Landmark& lm,
       continue;
     }
     KeyFrame* kf = keyframe(kf_id);
-    out.push_back({ReprojectionFactor::create(lm.bearing, z.head<2>(), R_bc0_, t_bc0_, R_bc0_,
-                                              t_bc0_, sqrt_info),
+    out.push_back({new ReprojectionFactorAnalytic(lm.bearing, z.head<2>(), R_bc0_, t_bc0_,
+                                                  R_bc0_, t_bc0_, sqrt_info),
                    huber_.get(), {anchor->p, anchor->q, kf->p, kf->q, lm.inv_depth}});
-    out.push_back({ReprojectionFactor::create(lm.bearing, z.tail<2>(), R_bc0_, t_bc0_, R_bc1_,
-                                              t_bc1_, sqrt_info),
+    out.push_back({new ReprojectionFactorAnalytic(lm.bearing, z.tail<2>(), R_bc0_, t_bc0_,
+                                                  R_bc1_, t_bc1_, sqrt_info),
                    huber_.get(), {anchor->p, anchor->q, kf->p, kf->q, lm.inv_depth}});
   }
 }
@@ -239,7 +269,7 @@ void SlidingWindowEstimator::repropagate_if_needed(KeyFrame& prev, KeyFrame& kf)
   }
 }
 
-void SlidingWindowEstimator::optimize() {
+long SlidingWindowEstimator::optimize() {
   MSCKF_PROFILE("swo/optimize");
   ceres::Problem::Options problem_options;
   problem_options.cost_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
@@ -268,9 +298,15 @@ void SlidingWindowEstimator::optimize() {
     problem.AddResidualBlock(owned.back().get(), nullptr, prev.p, prev.q, prev.sb, kf.p, kf.q,
                              kf.sb);
   }
+  long n_usable = 0;
+  for (const auto& [id, lm] : landmarks_) {
+    n_usable += usable(lm) ? 1 : 0;
+  }
+  const bool use_vision = n_usable >= sc_.min_vision_landmarks;
+  last_solve_used_vision_ = use_vision;
   long n_landmarks = 0;
   for (auto& [id, lm] : landmarks_) {
-    if (!usable(lm)) {
+    if (!use_vision || !usable(lm)) {
       continue;
     }
     std::vector<ResidualBlockInfo> factors;
@@ -294,10 +330,13 @@ void SlidingWindowEstimator::optimize() {
   options.logging_type = ceres::SILENT;
   ceres::Solver::Summary summary;
   ceres::Solve(options, &problem, &summary);
+  last_solve_ = {summary.initial_cost, summary.final_cost,
+                 static_cast<int>(summary.iterations.size())};
 
   for (const auto& kf : window_) {
     kf->orientation().normalize();
   }
+  return n_landmarks;
 }
 
 void SlidingWindowEstimator::erase_landmark(FeatureID id) {
@@ -315,6 +354,9 @@ void SlidingWindowEstimator::erase_landmark(FeatureID id) {
 
 void SlidingWindowEstimator::remove_outliers() {
   MSCKF_PROFILE("swo/remove_outliers");
+  if (!last_solve_used_vision_) {
+    return;   // landmarks were not optimized, so their errors mean nothing yet
+  }
   std::vector<FeatureID> bad;
   for (auto& [id, lm] : landmarks_) {
     if (!usable(lm)) {
@@ -358,8 +400,8 @@ void SlidingWindowEstimator::marginalize_oldest() {
 
   std::set<double*> drop = {kf0.p, kf0.q, kf0.sb};
   for (auto& [id, lm] : landmarks_) {
-    if (lm.anchor_id != kf0.id || !usable(lm)) {
-      continue;
+    if (!last_solve_used_vision_ || lm.anchor_id != kf0.id || !usable(lm)) {
+      continue;   // only landmarks that were part of the last solve
     }
     std::vector<ResidualBlockInfo> factors;
     landmark_factors(lm, factors);
@@ -446,15 +488,35 @@ std::optional<VioResult> SlidingWindowEstimator::feature_callback(const FeatureM
   cur_preint_->predict(last.position(), Eigen::Quaterniond(last.orientation()), last.velocity(),
                        gravity_, p, q, v);
 
+  if (tracked_from_last_keyframe(msg) < sc_.reset_min_tracked) {
+    // Tracking lost: the window cannot be tied to the new features, so restart
+    // it from the IMU prediction instead of letting a handful of fresh
+    // landmarks drag the whole window around.
+    const Eigen::Vector3d ba = last.acc_bias(), bg = last.gyro_bias();
+    start_window(msg, p, q, v, ba, bg, sc_.reset_pos_sigma, sc_.reset_rot_sigma);
+    ++stats_.resets;
+    return make_result(msg.timestamp, p, q, v);
+  }
+
   if (!is_keyframe(msg)) {
     // Not enough new information: report the IMU prediction.
     return make_result(msg.timestamp, p, q, v);
   }
 
   add_keyframe(msg, p, q, v);
-  optimize();
+  const long n_landmarks = optimize();
+  const long outliers_before = stats_.outliers_removed;
   remove_outliers();
   KeyFrame& kf = *window_.back();
+  if (debug_log_.is_open()) {
+    char line[256];
+    std::snprintf(line, sizeof(line), "%.6f,%ld,%.6g,%.6g,%d,%.4f,%.4f,%.4f,%ld\n",
+                  msg.timestamp, n_landmarks, last_solve_.initial_cost, last_solve_.final_cost,
+                  last_solve_.iterations, (Eigen::Vector3d(kf.position()) - p).norm(),
+                  (Eigen::Vector3d(kf.velocity()) - v).norm(), kf.velocity().norm(),
+                  stats_.outliers_removed - outliers_before);
+    debug_log_ << line;
+  }
   const VioResult result = make_result(msg.timestamp, kf.position(),
                                        Eigen::Quaterniond(kf.orientation()), kf.velocity());
   if (static_cast<int>(window_.size()) > sc_.window_size) {

@@ -121,6 +121,11 @@ Config load_config(const std::string& yaml_path) {
     read(s, "init_vel_sigma", w.init_vel_sigma);
     read(s, "init_acc_bias_sigma", w.init_acc_bias_sigma);
     read(s, "init_gyro_bias_sigma", w.init_gyro_bias_sigma);
+    read(s, "min_vision_landmarks", w.min_vision_landmarks);
+    read(s, "reset_min_tracked", w.reset_min_tracked);
+    read(s, "reset_pos_sigma", w.reset_pos_sigma);
+    read(s, "reset_rot_sigma", w.reset_rot_sigma);
+    read(s, "debug_log", w.debug_log);
   }
 
   if (const YAML::Node f = n["fixes"]) {

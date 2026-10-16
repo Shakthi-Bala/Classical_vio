@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deque>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <optional>
@@ -45,6 +46,7 @@ class SlidingWindowEstimator final : public Estimator {
     long marginalizations = 0;
     long landmarks_optimized = 0;   // summed over solves
     long outliers_removed = 0;
+    long resets = 0;   // window restarts after tracking loss
   };
   const Stats& stats() const { return stats_; }
 
@@ -74,6 +76,12 @@ class SlidingWindowEstimator final : public Estimator {
 
   void initialize_gravity_and_bias();
   void initialize_first_keyframe(const FeatureMsg& msg);
+  // Clears window, map and priors; one keyframe at the given state, held by a
+  // Gaussian prior with the given position / rotation sigmas.
+  void start_window(const FeatureMsg& msg, const Eigen::Vector3d& p, const Eigen::Quaterniond& q,
+                    const Eigen::Vector3d& v, const Eigen::Vector3d& ba,
+                    const Eigen::Vector3d& bg, double pos_sigma, double rot_sigma);
+  int tracked_from_last_keyframe(const FeatureMsg& msg) const;
   void integrate_imu_until(double t);
   bool is_keyframe(const FeatureMsg& msg) const;
   void add_keyframe(const FeatureMsg& msg, const Eigen::Vector3d& p, const Eigen::Quaterniond& q,
@@ -87,7 +95,8 @@ class SlidingWindowEstimator final : public Estimator {
   void landmark_factors(Landmark& lm, std::vector<ResidualBlockInfo>& out) const;
   void repropagate_if_needed(KeyFrame& prev, KeyFrame& kf) const;
 
-  void optimize();
+  // Returns the number of landmarks in the problem.
+  long optimize();
   void remove_outliers();
   void marginalize_oldest();
   void erase_landmark(FeatureID id);
@@ -126,6 +135,12 @@ class SlidingWindowEstimator final : public Estimator {
   std::unique_ptr<ceres::LossFunction> huber_;
 
   Stats stats_;
+  std::ofstream debug_log_;
+  bool last_solve_used_vision_ = false;   // gates marginalization / outlier checks
+  struct SolveInfo {
+    double initial_cost = 0.0, final_cost = 0.0;
+    int iterations = 0;
+  } last_solve_;
 };
 
 }  // namespace msckf::swo

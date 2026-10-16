@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 #include <ceres/autodiff_cost_function.h>
+#include <ceres/sized_cost_function.h>
 
 #include "msckf/swo/imu_preintegration.h"
 #include "msckf/swo/quaternion_manifold.h"
@@ -124,6 +125,98 @@ class ReprojectionFactor {
   }
 
  private:
+  Eigen::Vector3d bearing_;
+  Eigen::Vector2d z_;
+  Eigen::Matrix3d R_bc0_;
+  Eigen::Vector3d t_bc0_;
+  Eigen::Matrix3d R_bc_;
+  Eigen::Vector3d t_bc_;
+  double sqrt_info_;
+};
+
+// Same residual as ReprojectionFactor with hand-derived Jacobians: it is the
+// most numerous factor, and autodiff (15-dim Jets) was a third of the solve
+// time. test_swo.cpp checks it against the autodiff version above.
+//
+// With D = d(projection)/d(p_c), A = D R_bc^T, right perturbations on q:
+//   dr/dp_a   =  A R_j^T              dr/dth_a = -A R_j^T R_a [p_b_a]x
+//   dr/dp_j   = -A R_j^T              dr/dth_j =  A [p_b_j]x
+//   dr/drho   = -A R_j^T R_a R_bc0 bearing / rho^2
+// Quaternion blocks are 4-D in ceres; J_ambient = J_tangent * MinusJacobian
+// satisfies J_ambient * PlusJacobian = J_tangent, which is all ceres needs.
+class ReprojectionFactorAnalytic final : public ceres::SizedCostFunction<2, 3, 4, 3, 4, 1> {
+ public:
+  ReprojectionFactorAnalytic(const Eigen::Vector3d& bearing, const Eigen::Vector2d& z,
+                             const Eigen::Matrix3d& R_bc0, const Eigen::Vector3d& t_bc0,
+                             const Eigen::Matrix3d& R_bc, const Eigen::Vector3d& t_bc,
+                             double sqrt_info)
+      : bearing_(bearing), z_(z), R_bc0_(R_bc0), t_bc0_(t_bc0), R_bc_(R_bc), t_bc_(t_bc),
+        sqrt_info_(sqrt_info) {}
+
+  bool Evaluate(double const* const* x, double* residuals, double** jacobians) const override {
+    const Eigen::Map<const Eigen::Vector3d> p_a(x[0]), p_j(x[2]);
+    const Eigen::Map<const Eigen::Quaterniond> q_a(x[1]), q_j(x[3]);
+    const double rho = x[4][0];
+    const Eigen::Matrix3d R_a = q_a.toRotationMatrix();
+    const Eigen::Matrix3d R_j = q_j.toRotationMatrix();
+
+    const Eigen::Vector3d p_c0_a = bearing_ / rho;
+    const Eigen::Vector3d p_b_a = R_bc0_ * p_c0_a + t_bc0_;
+    const Eigen::Vector3d p_w = R_a * p_b_a + p_a;
+    const Eigen::Vector3d p_b_j = R_j.transpose() * (p_w - p_j);
+    const Eigen::Vector3d p_c = R_bc_.transpose() * (p_b_j - t_bc_);
+
+    const double inv_z = 1.0 / p_c.z();
+    residuals[0] = sqrt_info_ * (p_c.x() * inv_z - z_.x());
+    residuals[1] = sqrt_info_ * (p_c.y() * inv_z - z_.y());
+    if (jacobians == nullptr) {
+      return true;
+    }
+
+    Eigen::Matrix<double, 2, 3> D;
+    D << inv_z, 0.0, -p_c.x() * inv_z * inv_z,
+         0.0, inv_z, -p_c.y() * inv_z * inv_z;
+    D *= sqrt_info_;
+    const Eigen::Matrix<double, 2, 3> A = D * R_bc_.transpose();
+    const Eigen::Matrix<double, 2, 3> A_Rjt = A * R_j.transpose();
+
+    using J23 = Eigen::Matrix<double, 2, 3, Eigen::RowMajor>;
+    using J24 = Eigen::Matrix<double, 2, 4, Eigen::RowMajor>;
+    if (jacobians[0] != nullptr) {
+      Eigen::Map<J23> J(jacobians[0]);
+      J = A_Rjt;
+    }
+    if (jacobians[1] != nullptr) {
+      Eigen::Map<J24> J(jacobians[1]);
+      J = (-A_Rjt * R_a * skew3(p_b_a)) * minus_jacobian(q_a);
+    }
+    if (jacobians[2] != nullptr) {
+      Eigen::Map<J23> J(jacobians[2]);
+      J = -A_Rjt;
+    }
+    if (jacobians[3] != nullptr) {
+      Eigen::Map<J24> J(jacobians[3]);
+      J = (A * skew3(p_b_j)) * minus_jacobian(q_j);
+    }
+    if (jacobians[4] != nullptr) {
+      Eigen::Map<Eigen::Vector2d> J(jacobians[4]);
+      J = A_Rjt * R_a * R_bc0_ * (-bearing_ / (rho * rho));
+    }
+    return true;
+  }
+
+ private:
+  static Eigen::Matrix3d skew3(const Eigen::Vector3d& v) {
+    Eigen::Matrix3d S;
+    S << 0.0, -v.z(), v.y(), v.z(), 0.0, -v.x(), -v.y(), v.x(), 0.0;
+    return S;
+  }
+  static Eigen::Matrix<double, 3, 4> minus_jacobian(const Eigen::Quaterniond& q) {
+    Eigen::Matrix<double, 3, 4, Eigen::RowMajor> J;
+    RightQuaternionManifold().MinusJacobian(q.coeffs().data(), J.data());
+    return J;
+  }
+
   Eigen::Vector3d bearing_;
   Eigen::Vector2d z_;
   Eigen::Matrix3d R_bc0_;

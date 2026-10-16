@@ -18,3 +18,5 @@ cpp/results/sequences/
 cpp/results/slurm/
 cpp/results/swo_dev/
 cpp/build-*/
+cpp/results/backends/*/*/timing_cpp.csv
+cpp/results/backends/*/*/profile_stages.csv

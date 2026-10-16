@@ -192,3 +192,52 @@ TEST(Swo, MarginalizationMatchesJointSolution) {
   EXPECT_NEAR(y[0], y_joint[0], 1e-8);
   EXPECT_NEAR(y[1], y_joint[1], 1e-8);
 }
+
+TEST(Swo, AnalyticReprojectionMatchesAutodiff) {
+  // Random but well-conditioned geometry: point ~3 m in front of the anchor.
+  const Eigen::Matrix3d R_bc0 = Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitY()).toRotationMatrix();
+  const Eigen::Vector3d t_bc0(0.05, -0.02, 0.01);
+  const Eigen::Matrix3d R_bc1 = Eigen::AngleAxisd(-0.05, Eigen::Vector3d::UnitX()).toRotationMatrix();
+  const Eigen::Vector3d t_bc1(-0.06, -0.02, 0.0);
+  const Eigen::Vector3d bearing(0.1, -0.05, 1.0);
+  const Eigen::Vector2d z(0.12, -0.03);
+
+  double p_a[3] = {0.1, 0.2, 0.3}, p_j[3] = {0.4, 0.1, 0.2}, rho[1] = {0.33};
+  Eigen::Quaterniond q_a(Eigen::AngleAxisd(0.3, Eigen::Vector3d(1, 0, 1).normalized()));
+  Eigen::Quaterniond q_j(Eigen::AngleAxisd(0.35, Eigen::Vector3d(1, 0.2, 1).normalized()));
+  const double* params[] = {p_a, q_a.coeffs().data(), p_j, q_j.coeffs().data(), rho};
+
+  std::unique_ptr<ceres::CostFunction> ad(
+      ReprojectionFactor::create(bearing, z, R_bc0, t_bc0, R_bc1, t_bc1, 300.0));
+  ReprojectionFactorAnalytic an(bearing, z, R_bc0, t_bc0, R_bc1, t_bc1, 300.0);
+
+  const int sizes[] = {3, 4, 3, 4, 1};
+  double r_ad[2], r_an[2];
+  std::vector<std::vector<double>> J_ad(5), J_an(5);
+  double* jp_ad[5];
+  double* jp_an[5];
+  for (int k = 0; k < 5; ++k) {
+    J_ad[k].resize(2 * sizes[k]);
+    J_an[k].resize(2 * sizes[k]);
+    jp_ad[k] = J_ad[k].data();
+    jp_an[k] = J_an[k].data();
+  }
+  ad->Evaluate(params, r_ad, jp_ad);
+  an.Evaluate(params, r_an, jp_an);
+  EXPECT_NEAR(r_ad[0], r_an[0], 1e-12);
+  EXPECT_NEAR(r_ad[1], r_an[1], 1e-12);
+
+  // Compare in tangent space: J_ambient * PlusJacobian (quaternion blocks).
+  const RightQuaternionManifold m;
+  for (int k = 0; k < 5; ++k) {
+    Eigen::MatrixXd A = Eigen::Map<Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(J_ad[k].data(), 2, sizes[k]);
+    Eigen::MatrixXd B = Eigen::Map<Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(J_an[k].data(), 2, sizes[k]);
+    if (sizes[k] == 4) {
+      Eigen::Matrix<double, 4, 3, Eigen::RowMajor> P;
+      m.PlusJacobian(params[k], P.data());
+      A = A * P;
+      B = B * P;
+    }
+    EXPECT_NEAR((A - B).norm(), 0.0, 1e-9 * std::max(1.0, A.norm())) << "block " << k;
+  }
+}

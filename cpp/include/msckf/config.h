@@ -51,6 +51,18 @@ struct SwoConfig {
   double init_vel_sigma = 0.5;
   double init_acc_bias_sigma = 0.1;
   double init_gyro_bias_sigma = 0.01;
+  // Fewer usable landmarks than this: solve with IMU + prior only, so a
+  // handful of freshly initialized landmarks cannot drag the window around
+  // (tracking loss in V2_03).
+  int min_vision_landmarks = 0;   // 0 = off; gating made V2_03 worse (15.2 vs 5.0 m)
+  // Tracking loss: if fewer of the last keyframe's landmarks are seen, restart
+  // the window from the current IMU-predicted state (like the MSCKF's online
+  // reset). 0 = off; on V2_03 restarting made things worse (it discards the
+  // velocity estimate). Position/rotation prior of the restarted window:
+  int reset_min_tracked = 0;
+  double reset_pos_sigma = 0.01;
+  double reset_rot_sigma = 0.01;
+  std::string debug_log;               // if set: one CSV line per keyframe solve
 };
 
 struct CameraConfig {

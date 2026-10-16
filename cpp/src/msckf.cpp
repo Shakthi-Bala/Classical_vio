@@ -472,7 +472,8 @@ bool MSCKF::gating_test(const Eigen::MatrixXd& H, const Eigen::VectorXd& r, int 
       cols.push_back(c);
     }
   }
-  const Eigen::MatrixXd H_sub = H(Eigen::all, cols);   // Eigen 3.4 indexed view
+  // Indexed view; Eigen::placeholders::all works in Eigen 3.4 and 5 (Eigen::all is gone in 5).
+  const Eigen::MatrixXd H_sub = H(Eigen::placeholders::all, cols);
   const Eigen::MatrixXd P1 =
       H_sub * state_server_.state_cov(cols, cols) * H_sub.transpose();
   const Eigen::MatrixXd P2 =
