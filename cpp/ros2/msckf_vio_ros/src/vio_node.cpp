@@ -228,6 +228,7 @@ class VioNode : public rclcpp::Node {
       std::snprintf(line, sizeof(line), "%.9f,%.4f,%.4f,%.4f\n", pair.stamp, process_ms, e2e_ms,
                     e2e_ms - process_ms);
       timing_ << line;
+      timing_.flush();   // survives a hard kill at the end of a bag
     }
   }
 

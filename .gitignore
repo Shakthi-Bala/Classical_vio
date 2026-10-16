@@ -20,3 +20,5 @@ cpp/results/swo_dev/
 cpp/build-*/
 cpp/results/backends/*/*/timing_cpp.csv
 cpp/results/backends/*/*/profile_stages.csv
+cpp/results/ros2/*/node.log
+cpp/results/ros2/*/play.log

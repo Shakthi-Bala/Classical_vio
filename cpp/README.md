@@ -121,6 +121,79 @@ What it shows:
 - Python vs "C++ = Python" differs on MH_02/04/05: the float32 effect described above,
   amplified over longer, faster sequences. Same algorithm, different rounding.
 
+## Sliding-window optimizer (Ceres) back end
+
+`main_euroc --backend swo` runs a keyframe-based sliding-window optimizer on the
+same front end ([`include/msckf/swo/`](include/msckf/swo), [`src/swo/`](src/swo)):
+
+- **States** per keyframe: position, orientation (Hamilton quaternion with a
+  right-perturbation manifold, [`quaternion_manifold.h`](include/msckf/swo/quaternion_manifold.h)),
+  velocity, accelerometer and gyroscope bias. Window of 10 keyframes.
+- **IMU factor**: on-manifold preintegration (Forster et al. 2017) with bias
+  Jacobians for first-order bias correction, re-integrated when the bias moves far
+  ([`imu_preintegration.cpp`](src/swo/imu_preintegration.cpp)).
+- **Visual factors**: landmarks are inverse depths in their anchor keyframe, initialized
+  from the stereo pair; every stereo observation is a reprojection residual (Huber
+  loss). The reprojection Jacobians are hand-derived
+  ([`ReprojectionFactorAnalytic`](include/msckf/swo/factors.h)); autodiff was a third of the
+  solve time.
+- **Marginalization**: the oldest keyframe and its landmarks become a Gaussian prior via
+  the Schur complement ([`marginalization.cpp`](src/swo/marginalization.cpp)).
+- **Keyframes**: a new keyframe when parallax > 10 px, < 50 % of features still tracked,
+  or 0.25 s passed; other frames report the IMU prediction.
+- **Tests** ([`test/test_swo.cpp`](test/test_swo.cpp)): manifold Plus/Minus and Jacobian,
+  bias Jacobians vs numerical differentiation, IMU factor zero at the prediction,
+  marginalization equal to the joint solution, analytic vs autodiff reprojection Jacobians.
+
+Tried and rejected (both kept as options, off by default): restarting the window after
+tracking loss (`reset_min_tracked`) and ignoring vision when fewer than N landmarks are
+usable (`min_vision_landmarks`). Both made V2_03 worse (33.6 m and 15.2 m vs 5.0 m).
+The per-keyframe `debug_log` showed why it diverges: tracking is lost completely for
+several seconds and the few re-acquired landmarks then move the whole window.
+
+## ROS 2 node
+
+[`ros2/msckf_vio_ros`](ros2/msckf_vio_ros) wraps either back end as a ROS 2 (Humble)
+node. It builds the same library as a CMake subproject, so it runs exactly the code
+above.
+
+- Subscribes `/imu0`, `/cam0/image_raw`, `/cam1/image_raw`; publishes `odometry`,
+  `path` and the `world -> imu` TF.
+- Stereo images are paired by timestamp, and a pair is processed only after every IMU
+  sample up to its timestamp: the same order as the offline replay, independent of
+  how DDS interleaves the topics.
+- Played back in real time from the MH_01 ROS 2 bag, the node gives the **same 2862
+  poses and the same ATE as `main_euroc`** (0.0884 m MSCKF, 0.1013 m sliding window;
+  positions within 1e-4 m, the difference being OpenCV 4.13 / Eigen 5 in the ROS env).
+
+| MH_01, ROS 2, real-time playback, 1 core | process mean / p95 | end to end mean / p95 |
+|---|---|---|
+| MSCKF | 10.3 / 13.1 ms | 10.9 / 14.2 ms |
+| Sliding window | 19.2 / 38.0 ms | 22.1 / 38.9 ms |
+
+End to end = from the arrival of the later image of a pair to the published odometry
+(includes DDS delivery and queueing). Run it with
+[`ros2/run_euroc_bag.sh`](ros2/run_euroc_bag.sh) (environment: see below).
+
+## Final comparison (11 EuRoC sequences)
+
+![final](results/final/ate_per_sequence.png)
+
+FINAL_TABLE
+
+All runs use the deterministic replay, the start offsets of
+[`config/euroc_offsets.csv`](config/euroc_offsets.csv) and the same ATE code.
+"MSCKF fixed" and "SWO" use [`config/euroc_fixed.yaml`](config/euroc_fixed.yaml).
+VINS-Fusion (ROS 2 port, stereo + IMU, loop closure off, upstream EuRoC config) runs
+on the whole bag and is scored on the same time span as ours.
+
+| MH_01, one core, `--threads 1` | mean / p95 per frame | real-time factor |
+|---|---|---|
+| Python MSCKF | 34.5 / 60.2 ms | 1.45x |
+| C++ MSCKF, Python behaviour | 8.6 / 12.3 ms | 5.80x |
+| C++ MSCKF, quirks fixed | 11.3 / 14.6 ms | 4.41x |
+| C++ sliding window | 19.9 / 43.5 ms | 2.51x |
+
 ## Build
 
 ```bash

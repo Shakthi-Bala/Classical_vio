@@ -25,7 +25,9 @@ set -u
 # A separate DDS domain per job, so parallel jobs never see each other.
 export ROS_DOMAIN_ID=$(( ${SLURM_JOB_ID:-$$} % 200 + 20 ))
 
-ros2 run msckf_vio_ros vio_node --ros-args \
+# Run the binary directly: the "ros2 run" wrapper does not pass SIGINT on
+# cleanly, and the node writes its statistics on shutdown.
+"$W/install/msckf_vio_ros/lib/msckf_vio_ros/vio_node" --ros-args \
     -p config:="$CONFIG" -p backend:="$BACKEND" -p output_dir:="$OUT" \
     -p skip_seconds:="$SKIP" -p opencv_threads:=1 > "$OUT/node.log" 2>&1 &
 NODE=$!

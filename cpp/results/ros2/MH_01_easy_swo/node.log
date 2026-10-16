@@ -1,1 +1,3 @@
-[INFO] [1792161829.414357278] [msckf_vio]: backend swo, config /home/sbalamurugan/Classical_vio/cpp/config/euroc_fixed.yaml
+[INFO] [1792162363.363685624] [msckf_vio]: backend swo, config /home/sbalamurugan/Classical_vio/cpp/config/euroc_fixed.yaml
+[INFO] [1792162557.928529868] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[msckf_vio] frames 2882 | process mean 19.18 p50 10.05 p95 38.03 ms | end-to-end mean 22.08 p50 10.83 p95 38.92 ms
