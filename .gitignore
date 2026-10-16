@@ -1,0 +1,10 @@
+# C++ build artifacts
+cpp/build/
+cpp/build-*/
+cpp/install/
+.cache/
+compile_commands.json
+
+# Python
+__pycache__/
+*.pyc
