@@ -77,6 +77,50 @@ about half of a frame. Cutting it further means changing the algorithm (fewer LK
 iterations, skip the backward check), which changes the results, so it belongs to
 the quirk/ablation step, not to "same output, faster".
 
+## Python-quirk ablation (11 EuRoC sequences)
+
+Each quirk in the table at the end has an opt-in fix (`--fix NAME`, or the `fixes:`
+section of the YAML; [`config/euroc_fixed.yaml`](config/euroc_fixed.yaml) has the
+recommended set). All 11 sequences were run with each fix alone, all fixes, and all
+but the chi-squared one. Start offsets come from
+[`scripts/find_start_offsets.py`](scripts/find_start_offsets.py) (quietest IMU second
+before take-off; it picks 40.3 s for MH_01, where `vio.py` used 40 s).
+
+![ablation](results/ablation/ablation.png)
+
+| ATE RMSE [m] | Python | C++ = Python | **C++ fixed** (all but 3) |
+|---|---|---|---|
+| MH_01_easy | 0.129 | 0.128 | **0.088** |
+| MH_02_easy | 0.472 | 0.576 | **0.205** |
+| MH_03_medium | 0.214 | 0.214 | 0.234 |
+| MH_04_difficult | 0.880 | 1.030 | **0.415** |
+| MH_05_difficult | 0.819 | 0.869 | **0.420** |
+| V1_01_easy | 0.346 | 0.384 | **0.117** |
+| V1_02_medium | 0.128 | 0.128 | 0.148 |
+| V1_03_difficult | 0.429 | 0.429 | **0.244** |
+| V2_01_easy | 0.276 | 0.270 | **0.095** |
+| V2_02_medium | 0.204 | 0.204 | **0.100** |
+| V2_03_difficult | crashes | 2.535 | **0.677** |
+| mean (11 seq.) | - | 0.615 | **0.249** |
+
+Full table (every variant): [`results/ablation/ate_table.csv`](results/ablation/ate_table.csv).
+
+What it shows:
+- **Quirk 4 (observability constraint) is the big one**: the Python OC-EKF projects with
+  `R_w_i^T g` and leaves `Phi[0:3,0:3]` alone; the upstream form halves the error on
+  most sequences.
+- **Quirk 3 is load-bearing**: a "correct" 95 % chi-squared gate alone diverges on 8 of
+  11 sequences. With the broken epipolar check (quirk 1) and RANSAC disabled, the
+  over-strict 5 % gate is what keeps stereo outliers out. Even with every other fix,
+  the strict gate is still better (all-but-3 beats all).
+- **Run-to-run noise is real**: quirk 5 does not change the math (the propagated
+  quaternion keeps its norm), only the rounding, yet it moves single-sequence ATE by
+  up to a few percent. Only consistent wins across sequences count.
+- **The Python crashes on V2_03**: a frame with zero tracked features makes
+  `stereo_match` return `[]`, which `track_features` cannot unpack. The C++ handles it.
+- Python vs "C++ = Python" differs on MH_02/04/05: the float32 effect described above,
+  amplified over longer, faster sequences. Same algorithm, different rounding.
+
 ## Build
 
 ```bash

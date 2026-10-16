@@ -7,6 +7,7 @@
 #include <Eigen/Dense>
 
 #include "msckf/config.h"
+#include "msckf/estimator.h"
 #include "msckf/feature.h"
 #include "msckf/math_utils.h"
 #include "msckf/messages.h"
@@ -21,21 +22,14 @@
 
 namespace msckf {
 
-struct VioResult {
-  double timestamp = 0.0;
-  Isometry3d pose;        // body frame in the world frame
-  Eigen::Vector3d velocity = Eigen::Vector3d::Zero();
-  Isometry3d cam0_pose;   // cam0 frame in the world frame
-};
-
-class MSCKF {
+class MSCKF : public Estimator {
  public:
   explicit MSCKF(const Config& config);
 
-  void imu_callback(const ImuMsg& imu_msg);
+  void imu_callback(const ImuMsg& imu_msg) override;
 
   // Returns the new pose, or nothing while the filter is still initializing.
-  std::optional<VioResult> feature_callback(const FeatureMsg& feature_msg);
+  std::optional<VioResult> feature_callback(const FeatureMsg& feature_msg) override;
 
   const IMUState& imu_state() const { return state_server_.imu_state; }
   const Eigen::MatrixXd& state_cov() const { return state_server_.state_cov; }

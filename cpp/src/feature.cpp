@@ -143,7 +143,8 @@ bool Feature::initialize_position(const CamStateServer& cam_states) {
   // NOTE (Python parity): `is_cost_reduced` is never reset inside the outer
   // loop, so after the first accepted step the inner loop does not run again.
   // Upstream msckf_vio uses do-while loops and keeps iterating. Kept as in
-  // feature.py on purpose; see ROADMAP.md "Python quirks".
+  // feature.py by default; oc.upstream_lm_loops forces one step per outer
+  // iteration like the do-while (quirk 2 in README).
   while (outer_loop_count < oc.outer_loop_max_iteration &&
          delta_norm > oc.estimation_precision) {
     Eigen::Matrix3d A = Eigen::Matrix3d::Zero();
@@ -162,7 +163,9 @@ bool Feature::initialize_position(const CamStateServer& cam_states) {
       }
     }
 
-    while (inner_loop_count < oc.inner_loop_max_iteration && !is_cost_reduced) {
+    bool force_step = oc.upstream_lm_loops;
+    while (inner_loop_count < oc.inner_loop_max_iteration && (!is_cost_reduced || force_step)) {
+      force_step = false;
       const Eigen::Vector3d delta =
           (A + lambda * Eigen::Matrix3d::Identity()).partialPivLu().solve(b);
       const Eigen::Vector3d new_solution = solution - delta;

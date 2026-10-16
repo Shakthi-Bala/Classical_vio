@@ -76,3 +76,16 @@ T_imu_body: [1.0, 0.0, 0.0, 0.0,
              0.0, 1.0, 0.0, 0.0,
              0.0, 0.0, 1.0, 0.0,
              0.0, 0.0, 0.0, 1.0]
+
+# Sliding-window optimizer back end (main_euroc --backend swo)
+swo:
+  window_size: 10
+  kf_parallax_px: 10.0
+  kf_min_tracked_ratio: 0.5
+  kf_max_interval: 0.25
+  max_iterations: 8
+  pixel_sigma: 1.5
+  huber_px: 1.5
+  min_depth: 0.1
+  max_depth: 40.0
+  outlier_px: 3.0

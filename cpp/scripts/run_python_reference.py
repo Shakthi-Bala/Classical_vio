@@ -37,6 +37,7 @@ from scipy.spatial.transform import Rotation
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'Code'))
 
+import dataset as dataset_module
 import image as image_module
 import msckf as msckf_module
 from config import ConfigEuRoC
@@ -51,6 +52,39 @@ def _quiet(*args, **kwargs):
 
 FeatureMeasurement = namedtuple('FeatureMeasurement', ['id', 'u0', 'v0', 'u1', 'v1'])
 FeatureMsg = namedtuple('FeatureMsg', ['timestamp', 'features'])
+
+
+class TimestampPairedStereo:
+    """Stereo pairs matched by timestamp (within 5 ms), from the start time on."""
+    field = namedtuple('stereo_msg', ['timestamp', 'cam0_image', 'cam1_image', 'cam0_msg', 'cam1_msg'])
+    img_field = namedtuple('img_msg', ['timestamp', 'image'])
+
+    def __init__(self, cam0, cam1):
+        self.cam0, self.cam1 = cam0, cam1
+        self.timestamps = cam0.timestamps
+
+    def start_time(self):
+        return self.cam0.starttime
+
+    def set_starttime(self, starttime):
+        self.cam0.set_starttime(starttime)
+        self.cam1.set_starttime(starttime)
+
+    def __iter__(self):
+        t0, t1 = self.cam0.timestamps, self.cam1.timestamps
+        j = 0
+        for i, t in enumerate(t0):
+            while j < len(t1) and t1[j] < t - 0.005:
+                j += 1
+            if j == len(t1):
+                break
+            if abs(t1[j] - t) > 0.005:
+                continue
+            if t >= self.cam0.starttime:
+                l = self.img_field(t, self.cam0[i])
+                r = self.img_field(t1[j], self.cam1[j])
+                yield self.field(t, l.image, r.image, l, r)
+            j += 1
 
 
 def read_feature_file(path):
@@ -90,6 +124,10 @@ def main():
     image_processor.draw_features_stereo = lambda: None   # visualization only
     msckf = MSCKF(config)
 
+    # dataset.py's Stereo zips cam0/cam1 by index and asserts equal counts,
+    # which fails on sequences with dropped frames (MH_04, V1_02, V2_03).
+    # Pair by timestamp instead, exactly like the C++ EuRoCDataset.
+    dataset_module.Stereo = TimestampPairedStereo
     dataset = EuRoCDataset(args.path)
     dataset.set_starttime(offset=args.offset)
 

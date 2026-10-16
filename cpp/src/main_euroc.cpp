@@ -4,6 +4,8 @@
 //              [--out results/cpp] [--offset 40] [--max-frames N]
 //              [--features results/python/features_python.txt] [--dump-features]
 //              [--threads N]   (OpenCV worker threads; default = OpenCV's choice)
+//              [--fix NAME]... (turn on a Python-quirk fix; "all" for every fix)
+//              [--backend msckf|swo]  (filter, or Ceres sliding-window optimizer)
 //
 // Outputs in --out:
 //   traj_cpp.txt     TUM trajectory: t tx ty tz qx qy qz qw (body in world)
@@ -21,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -34,6 +37,7 @@
 #include "msckf/image_processor.h"
 #include "msckf/msckf.h"
 #include "msckf/profiler.h"
+#include "msckf/swo/sliding_window.h"
 
 namespace {
 
@@ -46,6 +50,8 @@ struct Args {
   long max_frames = -1;
   bool dump_features = false;
   int threads = -1;
+  std::vector<std::string> fixes;
+  std::string backend = "msckf";
 };
 
 Args parse_args(int argc, char** argv) {
@@ -66,6 +72,8 @@ Args parse_args(int argc, char** argv) {
     else if (key == "--max-frames") a.max_frames = std::stol(value());
     else if (key == "--dump-features") a.dump_features = true;
     else if (key == "--threads") a.threads = std::stoi(value());
+    else if (key == "--fix") a.fixes.push_back(value());
+    else if (key == "--backend") a.backend = value();
     else throw std::runtime_error("unknown argument " + key);
   }
   if (a.path.empty()) {
@@ -122,7 +130,11 @@ int main(int argc, char** argv) {
       cv::setNumThreads(args.threads);
     }
     std::printf("OpenCV threads: %d\n", cv::getNumThreads());
-    const msckf::Config config = msckf::load_config(args.config);
+    msckf::Config config = msckf::load_config(args.config);
+    for (const std::string& fix : args.fixes) {
+      msckf::enable_fix(config, fix);
+      std::printf("fix enabled: %s\n", fix.c_str());
+    }
     const msckf::EuRoCDataset dataset(args.path, args.offset);
 
     const bool replay = !args.features.empty();
@@ -132,7 +144,18 @@ int main(int argc, char** argv) {
     }
 
     msckf::ImageProcessor image_processor(config);
-    msckf::MSCKF vio(config);
+    std::unique_ptr<msckf::Estimator> vio;
+    msckf::swo::SlidingWindowEstimator* swo = nullptr;
+    if (args.backend == "swo") {
+      auto estimator = std::make_unique<msckf::swo::SlidingWindowEstimator>(config);
+      swo = estimator.get();
+      vio = std::move(estimator);
+    } else if (args.backend == "msckf") {
+      vio = std::make_unique<msckf::MSCKF>(config);
+    } else {
+      throw std::runtime_error("unknown backend " + args.backend);
+    }
+    std::printf("backend: %s\n", args.backend.c_str());
 
     std::filesystem::create_directories(args.out);
     std::ofstream traj(args.out + "/traj_cpp.txt");
@@ -163,7 +186,7 @@ int main(int argc, char** argv) {
       // Feed every IMU message up to (and including) this frame's timestamp.
       while (imu_idx < imu.size() && imu[imu_idx].timestamp <= t_img) {
         image_processor.imu_callback(imu[imu_idx]);
-        vio.imu_callback(imu[imu_idx]);
+        vio->imu_callback(imu[imu_idx]);
         ++imu_idx;
       }
 
@@ -190,7 +213,7 @@ int main(int argc, char** argv) {
       }
 
       const auto t1 = Clock::now();
-      const std::optional<msckf::VioResult> result = vio.feature_callback(feature_msg);
+      const std::optional<msckf::VioResult> result = vio->feature_callback(feature_msg);
       const double be_ms = ms_since(t1, Clock::now());
 
       std::snprintf(line, sizeof(line), "%.9f,%.4f,%.4f\n", t_img, fe_ms, be_ms);
@@ -225,6 +248,15 @@ int main(int argc, char** argv) {
     if (!replay) print_stats("frontend", frontend_ms);
     print_stats("backend", backend_ms);
     print_stats("total", total_ms);
+
+    if (swo != nullptr) {
+      const auto& st = swo->stats();
+      std::printf("sliding window: %ld frames, %ld keyframes, %ld marginalizations, "
+                  "%.1f landmarks per solve, %ld outlier landmarks removed\n",
+                  st.frames, st.keyframes, st.marginalizations,
+                  st.keyframes > 1 ? double(st.landmarks_optimized) / (st.keyframes - 1) : 0.0,
+                  st.outliers_removed);
+    }
 
     // Per-stage breakdown (inclusive times; "*" = called from several stages).
     std::ofstream stages(args.out + "/profile_stages.csv");

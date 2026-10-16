@@ -261,12 +261,14 @@ void ImageProcessor::add_new_features() {
       // NOTE (Python parity): numpy's mask[y-3:y+4, x-3:x+4] with a negative
       // start wraps around and selects nothing, so features within 3 px of the
       // top/left border are not masked. Reproduced on purpose.
-      if (y - 3 < 0 || x - 3 < 0) {
+      if (!config_.fixes.mask_clamp && (y - 3 < 0 || x - 3 < 0)) {
         continue;
       }
+      const int y_begin = std::max(y - 3, 0);
+      const int x_begin = std::max(x - 3, 0);
       const int y_end = std::min(y + 4, curr_img.rows);
       const int x_end = std::min(x + 4, curr_img.cols);
-      mask(cv::Range(y - 3, y_end), cv::Range(x - 3, x_end)).setTo(0);
+      mask(cv::Range(y_begin, y_end), cv::Range(x_begin, x_end)).setTo(0);
     }
   }
 
@@ -369,7 +371,7 @@ FeatureMsg ImageProcessor::publish() const {
   // returns the undistorted points in that same precision. cam1 points are
   // always float32.
   std::vector<cv::Point2d> cam0_undistorted;
-  if (has_new_feature) {
+  if (has_new_feature || config_.fixes.full_precision_publish) {
     const std::vector<cv::Point2d> pts(cam0_points.begin(), cam0_points.end());
     cam0_undistorted = undistort_points(pts, config_.cam0.intrinsics,
                                         config_.cam0.distortion_model,
@@ -380,9 +382,18 @@ FeatureMsg ImageProcessor::publish() const {
                                       config_.cam0.distortion_coeffs);
     cam0_undistorted.assign(und.begin(), und.end());
   }
-  const std::vector<cv::Point2f> cam1_undistorted =
-      undistort_points(cam1_points, config_.cam1.intrinsics, config_.cam1.distortion_model,
-                       config_.cam1.distortion_coeffs);
+  std::vector<cv::Point2d> cam1_undistorted;
+  if (config_.fixes.full_precision_publish) {
+    const std::vector<cv::Point2d> pts(cam1_points.begin(), cam1_points.end());
+    cam1_undistorted = undistort_points(pts, config_.cam1.intrinsics,
+                                        config_.cam1.distortion_model,
+                                        config_.cam1.distortion_coeffs);
+  } else {
+    const auto und = undistort_points(cam1_points, config_.cam1.intrinsics,
+                                      config_.cam1.distortion_model,
+                                      config_.cam1.distortion_coeffs);
+    cam1_undistorted.assign(und.begin(), und.end());
+  }
 
   FeatureMsg msg;
   msg.timestamp = curr_timestamp_;
@@ -550,7 +561,9 @@ void ImageProcessor::stereo_match(const std::vector<PointT>& cam0_points_in,
     // NOTE (Python parity): image.py computes (pt1 * epipolar_line)[0], i.e.
     // only the first term of the dot product pt1 . line. Upstream msckf_vio
     // uses the full dot product. Reproduced on purpose; see ROADMAP.md.
-    const double error = std::abs(pt1(0) * epipolar_line(0)) / epipolar_line.head<2>().norm();
+    const double numerator = config_.fixes.epipolar_full_dot ? pt1.dot(epipolar_line)
+                                                             : pt1(0) * epipolar_line(0);
+    const double error = std::abs(numerator) / epipolar_line.head<2>().norm();
     if (error > config_.stereo_threshold * norm_pixel_unit) {
       inlier_markers[i] = 0;
     }

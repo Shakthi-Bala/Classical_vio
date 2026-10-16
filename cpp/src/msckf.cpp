@@ -16,7 +16,7 @@ MSCKF::MSCKF(const Config& config) : config_(config) {
   chi_squared_test_table_.assign(100, 0.0);
   for (int i = 1; i < 100; ++i) {
     const boost::math::chi_squared_distribution<double> dist(i);
-    chi_squared_test_table_[i] = boost::math::quantile(dist, 0.05);
+    chi_squared_test_table_[i] = boost::math::quantile(dist, config_.fixes.chi2_95 ? 0.95 : 0.05);
   }
 
   state_server_.imu_state.velocity = config_.velocity;
@@ -151,7 +151,12 @@ void MSCKF::process_model(double time, const Eigen::Vector3d& m_gyro,
   // NOTE (Python parity): msckf.py uses u = R_w_i^T g with the pre-propagation
   // orientation and does not modify Phi[0:3, 0:3]. Upstream msckf_vio uses
   // u = R(orientation_null) g and also sets Phi[0:3, 0:3]. Kept as in Python.
-  const Eigen::Vector3d u = R_w_i.transpose() * gravity_;
+  Eigen::Vector3d u = R_w_i.transpose() * gravity_;
+  if (config_.fixes.oc_upstream) {
+    const Eigen::Matrix3d R_kk_1 = to_rotation(imu_state.orientation_null);
+    Phi.block<3, 3>(0, 0) = to_rotation(imu_state.orientation) * R_kk_1.transpose();
+    u = R_kk_1 * gravity_;
+  }
   const double u_squared = u.dot(u);
 
   const Eigen::Matrix3d A1 = Phi.block<3, 3>(6, 0);
@@ -229,7 +234,7 @@ void MSCKF::predict_new_state(double dt, const Eigen::Vector3d& gyro,
   const Eigen::Vector3d k4_p_dot = k3_v;
 
   // NOTE (Python parity): q is not re-normalized here (upstream does).
-  s.orientation = dq_dt;
+  s.orientation = config_.fixes.normalize_quaternion ? quaternion_normalize(dq_dt) : dq_dt;
   s.velocity = v + dt / 6 * (k1_v_dot + 2 * k2_v_dot + 2 * k3_v_dot + k4_v_dot);
   s.position = p + dt / 6 * (k1_p_dot + 2 * k2_p_dot + 2 * k3_p_dot + k4_p_dot);
 }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -83,23 +84,30 @@ EuRoCDataset::EuRoCDataset(const std::string& path, double start_offset) {
     }
   }
 
+  // Pair the two cameras by timestamp. Some sequences drop frames in one
+  // camera (MH_04: 1, V1_02: 1, V2_03: 416), so pairing by index would shift
+  // every later pair; frames without a partner within 5 ms are skipped.
   const auto cam0 = list_images(mav0 + "/cam0/data");
   const auto cam1 = list_images(mav0 + "/cam1/data");
-  if (cam0.size() != cam1.size()) {
-    throw std::runtime_error("cam0 and cam1 have a different number of images");
-  }
+  constexpr long long kMaxPairOffsetNs = 5'000'000;
+  size_t j = 0;
   for (size_t i = 0; i < cam0.size(); ++i) {
+    while (j < cam1.size() && cam1[j].first < cam0[i].first - kMaxPairOffsetNs) {
+      ++j;
+    }
+    if (j == cam1.size()) {
+      break;
+    }
+    if (std::llabs(cam1[j].first - cam0[i].first) > kMaxPairOffsetNs) {
+      continue;   // no partner for this cam0 frame
+    }
     const double t0 = static_cast<double>(cam0[i].first) * 1e-9;
-    const double t1 = static_cast<double>(cam1[i].first) * 1e-9;
-    if (std::abs(t0 - t1) >= 0.01) {
-      throw std::runtime_error("unsynced stereo pair at index " + std::to_string(i));
+    if (t0 >= start) {
+      cam_timestamps_.push_back(t0);
+      cam0_files_.push_back(cam0[i].second);
+      cam1_files_.push_back(cam1[j].second);
     }
-    if (t0 < start) {
-      continue;
-    }
-    cam_timestamps_.push_back(t0);
-    cam0_files_.push_back(cam0[i].second);
-    cam1_files_.push_back(cam1[i].second);
+    ++j;
   }
 }
 

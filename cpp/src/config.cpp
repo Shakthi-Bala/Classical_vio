@@ -104,12 +104,62 @@ Config load_config(const std::string& yaml_path) {
   read(n, "extrinsic_rotation_cov", c.extrinsic_rotation_cov);
   read(n, "extrinsic_translation_cov", c.extrinsic_translation_cov);
 
+  if (const YAML::Node s = n["swo"]) {
+    SwoConfig& w = c.swo;
+    read(s, "window_size", w.window_size);
+    read(s, "kf_parallax_px", w.kf_parallax_px);
+    read(s, "kf_min_tracked_ratio", w.kf_min_tracked_ratio);
+    read(s, "kf_max_interval", w.kf_max_interval);
+    read(s, "max_iterations", w.max_iterations);
+    read(s, "pixel_sigma", w.pixel_sigma);
+    read(s, "huber_px", w.huber_px);
+    read(s, "min_depth", w.min_depth);
+    read(s, "max_depth", w.max_depth);
+    read(s, "outlier_px", w.outlier_px);
+    read(s, "init_pos_sigma", w.init_pos_sigma);
+    read(s, "init_rot_sigma", w.init_rot_sigma);
+    read(s, "init_vel_sigma", w.init_vel_sigma);
+    read(s, "init_acc_bias_sigma", w.init_acc_bias_sigma);
+    read(s, "init_gyro_bias_sigma", w.init_gyro_bias_sigma);
+  }
+
+  if (const YAML::Node f = n["fixes"]) {
+    read(f, "epipolar_full_dot", c.fixes.epipolar_full_dot);
+    read(f, "lm_upstream_loops", c.optimization_config.upstream_lm_loops);
+    read(f, "chi2_95", c.fixes.chi2_95);
+    read(f, "oc_upstream", c.fixes.oc_upstream);
+    read(f, "normalize_quaternion", c.fixes.normalize_quaternion);
+    read(f, "mask_clamp", c.fixes.mask_clamp);
+    read(f, "full_precision_publish", c.fixes.full_precision_publish);
+  }
+
   read_camera(n["cam0"], c.cam0);
   read_camera(n["cam1"], c.cam1);
   read_matrix(n, "T_cn_cnm1", c.T_cn_cnm1);
   read_matrix(n, "T_imu_body", c.T_imu_body);
 
   return c;
+}
+
+void enable_fix(Config& c, const std::string& name) {
+  const bool all = name == "all";
+  bool known = all;
+  auto set = [&](const char* fix_name, bool& flag) {
+    if (all || name == fix_name) {
+      flag = true;
+      known = true;
+    }
+  };
+  set("epipolar_full_dot", c.fixes.epipolar_full_dot);
+  set("lm_upstream_loops", c.optimization_config.upstream_lm_loops);
+  set("chi2_95", c.fixes.chi2_95);
+  set("oc_upstream", c.fixes.oc_upstream);
+  set("normalize_quaternion", c.fixes.normalize_quaternion);
+  set("mask_clamp", c.fixes.mask_clamp);
+  set("full_precision_publish", c.fixes.full_precision_publish);
+  if (!known) {
+    throw std::runtime_error("unknown fix '" + name + "'");
+  }
 }
 
 }  // namespace msckf

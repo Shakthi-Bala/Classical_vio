@@ -13,3 +13,8 @@ __pycache__/
 cpp/results/**/features_*.txt
 cpp/results/**/run.log
 cpp/results/**/*.prof
+cpp/results/ablation/*/
+cpp/results/sequences/
+cpp/results/slurm/
+cpp/results/swo_dev/
+cpp/build-*/

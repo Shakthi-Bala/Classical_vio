@@ -17,6 +17,40 @@ struct OptimizationConfig {
   double initial_damping = 1e-3;
   int outer_loop_max_iteration = 5;
   int inner_loop_max_iteration = 5;
+  // Fix for quirk 2 (see Fixes below): run at least one LM step per outer
+  // iteration, like upstream's do-while loops.
+  bool upstream_lm_loops = false;
+};
+
+// Opt-in fixes for behaviours of the Python code that the port reproduces on
+// purpose (README "Python quirks"). All false = identical to the Python.
+struct Fixes {
+  bool epipolar_full_dot = false;       // 1: full pt1 . line in the stereo check
+  bool chi2_95 = false;                 // 3: gate at the 95th percentile, not the 5th
+  bool oc_upstream = false;             // 4: OC-EKF with R(q_null) g and Phi[0:3,0:3]
+  bool normalize_quaternion = false;    // 5: re-normalize q after propagation
+  bool mask_clamp = false;              // 6: mask features near the top/left border too
+  bool full_precision_publish = false;  // 8: undistort published points in double
+};
+
+// Sliding-window optimizer (Ceres) back end.
+struct SwoConfig {
+  int window_size = 10;                // keyframes kept in the optimization
+  double kf_parallax_px = 10.0;        // new keyframe if mean parallax exceeds this
+  double kf_min_tracked_ratio = 0.5;   // ... or if fewer of the last keyframe's features remain
+  double kf_max_interval = 0.25;       // ... or if this many seconds passed
+  int max_iterations = 8;              // Levenberg-Marquardt iterations per keyframe
+  double pixel_sigma = 1.5;            // reprojection noise [px]
+  double huber_px = 1.5;               // robust loss threshold [px]
+  double min_depth = 0.1;              // [m]
+  double max_depth = 40.0;             // [m]
+  double outlier_px = 3.0;             // drop a landmark above this mean reprojection error
+  // Start-up prior on the first keyframe (standard deviations).
+  double init_pos_sigma = 1e-3;
+  double init_rot_sigma = 1e-3;        // [rad]
+  double init_vel_sigma = 0.5;
+  double init_acc_bias_sigma = 0.1;
+  double init_gyro_bias_sigma = 0.01;
 };
 
 struct CameraConfig {
@@ -30,6 +64,8 @@ struct CameraConfig {
 
 struct Config {
   OptimizationConfig optimization_config;
+  Fixes fixes;
+  SwoConfig swo;
 
   // Image processor.
   int grid_row = 4;
@@ -79,5 +115,9 @@ struct Config {
 
 // Loads a YAML file. Keys that are missing keep their default value above.
 Config load_config(const std::string& yaml_path);
+
+// Turns on one fix by name ("epipolar_full_dot", "lm_upstream_loops", ...,
+// or "all"). Throws on an unknown name.
+void enable_fix(Config& config, const std::string& name);
 
 }  // namespace msckf
