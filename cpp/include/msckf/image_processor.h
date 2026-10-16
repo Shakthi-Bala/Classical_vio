@@ -35,6 +35,7 @@ class ImageProcessor {
   // One list of features per grid cell, indexed by row * grid_col + col.
   using GridFeatures = std::vector<std::vector<FeatureMetaData>>;
 
+  void create_image_pyramids();
   void initialize_first_frame();
   void track_features();
   void add_new_features();
@@ -76,8 +77,8 @@ class ImageProcessor {
 
   void get_grid_size(const cv::Mat& img, int& grid_height, int& grid_width) const;
 
-  // Optical flow with the parameters of config.py's lk_params.
-  void lk(const cv::Mat& prev_img, const cv::Mat& next_img,
+  // Optical flow with the parameters of config.py's lk_params, on prebuilt pyramids.
+  void lk(const std::vector<cv::Mat>& prev_pyramid, const std::vector<cv::Mat>& next_pyramid,
           const std::vector<cv::Point2f>& prev_pts, std::vector<cv::Point2f>& next_pts,
           std::vector<unsigned char>& status) const;
 
@@ -87,13 +88,19 @@ class ImageProcessor {
   cv::Ptr<cv::FastFeatureDetector> detector_;
   std::vector<ImuMsg> imu_msg_buffer_;
 
-  // Previous / current images. The Python version does not build pyramids
-  // itself (calcOpticalFlowPyrLK builds them internally), and neither do we.
   double prev_timestamp_ = 0.0;
   double curr_timestamp_ = 0.0;
   cv::Mat prev_cam0_img_;
   cv::Mat curr_cam0_img_;
   cv::Mat curr_cam1_img_;
+
+  // Image pyramids, built once per image and shared by all KLT calls.
+  // (image.py passes raw images, so OpenCV rebuilt both pyramids on each of
+  // the 5 KLT calls per frame: 10 builds for 3 distinct images.) The result is
+  // identical: calcOpticalFlowPyrLK builds the same pyramid internally.
+  std::vector<cv::Mat> prev_cam0_pyramid_;
+  std::vector<cv::Mat> curr_cam0_pyramid_;
+  std::vector<cv::Mat> curr_cam1_pyramid_;
 
   GridFeatures prev_features_;
   GridFeatures curr_features_;

@@ -5,6 +5,7 @@
 #include <iterator>
 
 #include <boost/math/distributions/chi_squared.hpp>
+#include "msckf/profiler.h"
 
 namespace msckf {
 
@@ -52,6 +53,7 @@ void MSCKF::imu_callback(const ImuMsg& imu_msg) {
 }
 
 std::optional<VioResult> MSCKF::feature_callback(const FeatureMsg& feature_msg) {
+  MSCKF_PROFILE("backend");
   if (!is_gravity_set_) {
     return std::nullopt;
   }
@@ -94,6 +96,7 @@ void MSCKF::initialize_gravity_and_bias() {
 }
 
 void MSCKF::batch_imu_processing(double time_bound) {
+  MSCKF_PROFILE("backend/imu_propagation");
   size_t used_imu_msg_count = 0;
   for (const ImuMsg& m : imu_msg_buffer_) {
     if (m.timestamp < state_server_.imu_state.timestamp) {
@@ -232,6 +235,7 @@ void MSCKF::predict_new_state(double dt, const Eigen::Vector3d& gyro,
 }
 
 void MSCKF::state_augmentation(double time) {
+  MSCKF_PROFILE("backend/state_augmentation");
   const IMUState& imu_state = state_server_.imu_state;
   const Eigen::Matrix3d& R_i_c = imu_state.R_imu_cam0;
   const Eigen::Vector3d& t_c_i = imu_state.t_cam0_imu;
@@ -270,6 +274,7 @@ void MSCKF::state_augmentation(double time) {
 }
 
 void MSCKF::add_feature_observations(const FeatureMsg& feature_msg) {
+  MSCKF_PROFILE("backend/add_feature_observations");
   const StateID state_id = state_server_.imu_state.id;
   const size_t curr_feature_num = map_server_.size();
   size_t tracked_feature_num = 0;
@@ -351,6 +356,7 @@ void MSCKF::measurement_jacobian(StateID cam_state_id, FeatureID feature_id,
 
 void MSCKF::feature_jacobian(FeatureID feature_id, const std::vector<StateID>& cam_state_ids,
                              Eigen::MatrixXd& H_x, Eigen::VectorXd& r) const {
+  MSCKF_PROFILE("backend/*/feature_jacobian");
   const Feature& feature = map_server_.at(feature_id);
 
   std::vector<StateID> valid_cam_state_ids;
@@ -389,6 +395,7 @@ void MSCKF::feature_jacobian(FeatureID feature_id, const std::vector<StateID>& c
 }
 
 void MSCKF::measurement_update(const Eigen::MatrixXd& H, const Eigen::VectorXd& r) {
+  MSCKF_PROFILE("backend/*/measurement_update");
   if (H.rows() == 0 || r.rows() == 0) {
     return;
   }
@@ -407,12 +414,14 @@ void MSCKF::measurement_update(const Eigen::MatrixXd& H, const Eigen::VectorXd& 
   }
 
   // Kalman gain K = P H^T S^-1, via a solve instead of an inverse.
+  // H P is computed once and reused for S, K and the covariance update.
   const Eigen::MatrixXd& P = state_server_.state_cov;
+  const Eigen::MatrixXd HP = H_thin * P;
   const Eigen::MatrixXd S =
-      H_thin * P * H_thin.transpose() +
+      HP * H_thin.transpose() +
       config_.observation_noise *
           Eigen::MatrixXd::Identity(H_thin.rows(), H_thin.rows());
-  const Eigen::MatrixXd K = S.ldlt().solve(H_thin * P).transpose();
+  const Eigen::MatrixXd K = S.ldlt().solve(HP).transpose();
 
   const Eigen::VectorXd delta_x = K * r_thin;
 
@@ -442,14 +451,25 @@ void MSCKF::measurement_update(const Eigen::MatrixXd& H, const Eigen::VectorXd& 
     ++i;
   }
 
-  // Covariance.
-  const Eigen::MatrixXd I_KH = Eigen::MatrixXd::Identity(K.rows(), K.rows()) - K * H_thin;
-  state_server_.state_cov = I_KH * P;   // product -> evaluated into a temporary first
+  // Covariance: (I - K H) P = P - K (H P). Same result without the n x n x n
+  // product. noalias() is safe: K and HP are separate matrices, not P.
+  state_server_.state_cov.noalias() -= K * HP;
   symmetrize(state_server_.state_cov);
 }
 
 bool MSCKF::gating_test(const Eigen::MatrixXd& H, const Eigen::VectorXd& r, int dof) const {
-  const Eigen::MatrixXd P1 = H * state_server_.state_cov * H.transpose();
+  MSCKF_PROFILE("backend/*/gating_test");
+  // H is zero outside the blocks of the camera states that saw the feature,
+  // so H P H^T only needs those columns of H and rows/columns of P.
+  std::vector<Eigen::Index> cols;
+  for (Eigen::Index c = 0; c < H.cols(); ++c) {
+    if (!H.col(c).isZero(0.0)) {
+      cols.push_back(c);
+    }
+  }
+  const Eigen::MatrixXd H_sub = H(Eigen::all, cols);   // Eigen 3.4 indexed view
+  const Eigen::MatrixXd P1 =
+      H_sub * state_server_.state_cov(cols, cols) * H_sub.transpose();
   const Eigen::MatrixXd P2 =
       config_.observation_noise * Eigen::MatrixXd::Identity(H.rows(), H.rows());
   const double gamma = r.dot((P1 + P2).ldlt().solve(r));
@@ -457,6 +477,7 @@ bool MSCKF::gating_test(const Eigen::MatrixXd& H, const Eigen::VectorXd& r, int 
 }
 
 void MSCKF::remove_lost_features() {
+  MSCKF_PROFILE("backend/remove_lost_features");
   Eigen::Index jacobian_row_size = 0;
   std::vector<FeatureID> invalid_feature_ids;
   std::vector<FeatureID> processed_feature_ids;
@@ -566,6 +587,7 @@ std::vector<StateID> MSCKF::find_redundant_cam_states() const {
 }
 
 void MSCKF::prune_cam_state_buffer() {
+  MSCKF_PROFILE("backend/prune_cam_state_buffer");
   if (static_cast<int>(state_server_.cam_states.size()) < config_.max_cam_state_size) {
     return;
   }

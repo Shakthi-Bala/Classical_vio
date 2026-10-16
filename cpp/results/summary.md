@@ -9,11 +9,11 @@ Accuracy from the unchanged Code/evaluate.py.
 | ATE RMSE [m] | 0.1289 | 0.1284 |
 | rotation RMSE [deg] | 1.984 | 1.977 |
 | RPE @ 10 m [% / deg] | 1.49 / 1.41 | 1.49 / 1.39 |
-| frontend latency mean / p95 [ms] | 15.95 / 17.48 | 8.87 / 9.70 |
-| backend latency mean / p95 [ms] | 18.59 / 44.02 | 3.55 / 7.83 |
-| total latency mean / p95 [ms] | 34.54 / 60.22 | 12.42 / 16.72 |
-| real-time factor | 1.45x | 4.02x |
-| speed-up (total mean) | | 2.8x |
+| frontend latency mean / p95 [ms] | 15.95 / 17.48 | 6.34 / 8.71 |
+| backend latency mean / p95 [ms] | 18.59 / 44.02 | 2.29 / 5.06 |
+| total latency mean / p95 [ms] | 34.54 / 60.22 | 8.63 / 12.32 |
+| real-time factor | 1.45x | 5.80x |
+| speed-up (total mean) | | 4.0x |
 
 ## Parity checks
 

@@ -3,6 +3,7 @@
 //   main_euroc --path /path/to/MH_01_easy [--config config/euroc.yaml]
 //              [--out results/cpp] [--offset 40] [--max-frames N]
 //              [--features results/python/features_python.txt] [--dump-features]
+//              [--threads N]   (OpenCV worker threads; default = OpenCV's choice)
 //
 // Outputs in --out:
 //   traj_cpp.txt     TUM trajectory: t tx ty tz qx qy qz qw (body in world)
@@ -26,11 +27,13 @@
 #include <vector>
 
 #include <Eigen/Geometry>
+#include <opencv2/core/utility.hpp>
 
 #include "msckf/config.h"
 #include "msckf/dataset.h"
 #include "msckf/image_processor.h"
 #include "msckf/msckf.h"
+#include "msckf/profiler.h"
 
 namespace {
 
@@ -42,6 +45,7 @@ struct Args {
   double offset = 40.0;
   long max_frames = -1;
   bool dump_features = false;
+  int threads = -1;
 };
 
 Args parse_args(int argc, char** argv) {
@@ -61,6 +65,7 @@ Args parse_args(int argc, char** argv) {
     else if (key == "--offset") a.offset = std::stod(value());
     else if (key == "--max-frames") a.max_frames = std::stol(value());
     else if (key == "--dump-features") a.dump_features = true;
+    else if (key == "--threads") a.threads = std::stoi(value());
     else throw std::runtime_error("unknown argument " + key);
   }
   if (a.path.empty()) {
@@ -113,6 +118,10 @@ void print_stats(const char* name, const std::vector<double>& ms) {
 int main(int argc, char** argv) {
   try {
     const Args args = parse_args(argc, argv);
+    if (args.threads > 0) {
+      cv::setNumThreads(args.threads);
+    }
+    std::printf("OpenCV threads: %d\n", cv::getNumThreads());
     const msckf::Config config = msckf::load_config(args.config);
     const msckf::EuRoCDataset dataset(args.path, args.offset);
 
@@ -216,6 +225,18 @@ int main(int argc, char** argv) {
     if (!replay) print_stats("frontend", frontend_ms);
     print_stats("backend", backend_ms);
     print_stats("total", total_ms);
+
+    // Per-stage breakdown (inclusive times; "*" = called from several stages).
+    std::ofstream stages(args.out + "/profile_stages.csv");
+    stages << "stage,total_ms,calls,ms_per_frame\n";
+    std::printf("stage breakdown (ms per frame, inclusive):\n");
+    for (const auto& [name, st] : msckf::prof::registry()) {
+      const double per_frame = st.total_ms / std::max<long>(processed, 1);
+      std::printf("  %-48s %8.3f  (%ld calls)\n", name.c_str(), per_frame, st.calls);
+      std::snprintf(line, sizeof(line), "%s,%.3f,%ld,%.4f\n", name.c_str(), st.total_ms,
+                    st.calls, per_frame);
+      stages << line;
+    }
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "error: " << e.what() << "\n";

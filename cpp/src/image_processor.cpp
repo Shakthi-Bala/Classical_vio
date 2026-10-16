@@ -7,6 +7,7 @@
 #include <opencv2/video/tracking.hpp>
 
 #include "msckf/math_utils.h"
+#include "msckf/profiler.h"
 
 namespace msckf {
 
@@ -65,9 +66,11 @@ ImageProcessor::ImageProcessor(const Config& config) : config_(config) {
 }
 
 FeatureMsg ImageProcessor::stereo_callback(const StereoMsg& stereo_msg) {
+  MSCKF_PROFILE("frontend");
   curr_timestamp_ = stereo_msg.timestamp;
   curr_cam0_img_ = stereo_msg.cam0_image;
   curr_cam1_img_ = stereo_msg.cam1_image;
+  create_image_pyramids();
 
   if (is_first_img_) {
     initialize_first_frame();
@@ -83,6 +86,9 @@ FeatureMsg ImageProcessor::stereo_callback(const StereoMsg& stereo_msg) {
   // The current frame becomes the previous one.
   prev_timestamp_ = curr_timestamp_;
   prev_cam0_img_ = curr_cam0_img_;
+  prev_cam0_pyramid_ = std::move(curr_cam0_pyramid_);
+  curr_cam0_pyramid_.clear();
+  curr_cam1_pyramid_.clear();
   prev_features_ = std::move(curr_features_);
   curr_features_.assign(config_.grid_num(), {});
   return msg;
@@ -93,13 +99,23 @@ void ImageProcessor::get_grid_size(const cv::Mat& img, int& grid_height, int& gr
   grid_width = static_cast<int>(std::ceil(static_cast<double>(img.cols) / config_.grid_col));
 }
 
-void ImageProcessor::lk(const cv::Mat& prev_img, const cv::Mat& next_img,
+void ImageProcessor::create_image_pyramids() {
+  MSCKF_PROFILE("frontend/build_pyramids");
+  const cv::Size win(config_.patch_size, config_.patch_size);
+  cv::buildOpticalFlowPyramid(curr_cam0_img_, curr_cam0_pyramid_, win, config_.pyramid_levels,
+                              true, cv::BORDER_REFLECT_101, cv::BORDER_CONSTANT, false);
+  cv::buildOpticalFlowPyramid(curr_cam1_img_, curr_cam1_pyramid_, win, config_.pyramid_levels,
+                              true, cv::BORDER_REFLECT_101, cv::BORDER_CONSTANT, false);
+}
+
+void ImageProcessor::lk(const std::vector<cv::Mat>& prev_pyramid,
+                        const std::vector<cv::Mat>& next_pyramid,
                         const std::vector<cv::Point2f>& prev_pts,
                         std::vector<cv::Point2f>& next_pts,
                         std::vector<unsigned char>& status) const {
   std::vector<float> err;
   cv::calcOpticalFlowPyrLK(
-      prev_img, next_img, prev_pts, next_pts, status, err,
+      prev_pyramid, next_pyramid, prev_pts, next_pts, status, err,
       cv::Size(config_.patch_size, config_.patch_size), config_.pyramid_levels,
       cv::TermCriteria(cv::TermCriteria::EPS | cv::TermCriteria::COUNT,
                        config_.max_iteration, config_.track_precision),
@@ -107,6 +123,7 @@ void ImageProcessor::lk(const cv::Mat& prev_img, const cv::Mat& next_img,
 }
 
 void ImageProcessor::initialize_first_frame() {
+  MSCKF_PROFILE("frontend/initialize_first_frame");
   const cv::Mat& img = curr_cam0_img_;
   int grid_height = 0, grid_width = 0;
   get_grid_size(img, grid_height, grid_width);
@@ -157,6 +174,7 @@ void ImageProcessor::initialize_first_frame() {
 }
 
 void ImageProcessor::track_features() {
+  MSCKF_PROFILE("frontend/track_features");
   const cv::Mat& img = curr_cam0_img_;
   int grid_height = 0, grid_width = 0;
   get_grid_size(img, grid_height, grid_width);
@@ -185,7 +203,10 @@ void ImageProcessor::track_features() {
   std::vector<cv::Point2f> curr_cam0_points =
       predict_feature_tracking(prev_cam0_points, cam0_R_p_c, config_.cam0.intrinsics);
   std::vector<unsigned char> track_inliers;
-  lk(prev_cam0_img_, curr_cam0_img_, prev_cam0_points, curr_cam0_points, track_inliers);
+  {
+    MSCKF_PROFILE("frontend/track_features/klt_temporal");
+    lk(prev_cam0_pyramid_, curr_cam0_pyramid_, prev_cam0_points, curr_cam0_points, track_inliers);
+  }
 
   // Points that left the image count as lost.
   for (size_t i = 0; i < curr_cam0_points.size(); ++i) {
@@ -226,6 +247,7 @@ void ImageProcessor::track_features() {
 }
 
 void ImageProcessor::add_new_features() {
+  MSCKF_PROFILE("frontend/add_new_features");
   const cv::Mat& curr_img = curr_cam0_img_;
   int grid_height = 0, grid_width = 0;
   get_grid_size(curr_img, grid_height, grid_width);
@@ -249,7 +271,10 @@ void ImageProcessor::add_new_features() {
   }
 
   std::vector<cv::KeyPoint> detected;
-  detector_->detect(curr_img, detected, mask);
+  {
+    MSCKF_PROFILE("frontend/add_new_features/fast_detect");
+    detector_->detect(curr_img, detected, mask);
+  }
 
   // Keep at most grid_max_feature_num of the strongest detections per cell.
   std::vector<std::vector<cv::KeyPoint>> new_feature_sieve(config_.grid_num());
@@ -309,6 +334,7 @@ void ImageProcessor::add_new_features() {
 }
 
 void ImageProcessor::prune_features() {
+  MSCKF_PROFILE("frontend/prune_features");
   // Too many features in a cell: keep the longest-tracked ones.
   for (std::vector<FeatureMetaData>& features : curr_features_) {
     if (static_cast<int>(features.size()) <= config_.grid_max_feature_num) {
@@ -323,6 +349,7 @@ void ImageProcessor::prune_features() {
 }
 
 FeatureMsg ImageProcessor::publish() const {
+  MSCKF_PROFILE("frontend/publish");
   std::vector<FeatureID> ids;
   std::vector<cv::Point2f> cam0_points;
   std::vector<cv::Point2f> cam1_points;
@@ -374,6 +401,7 @@ FeatureMsg ImageProcessor::publish() const {
 
 void ImageProcessor::integrate_imu_data(Eigen::Matrix3d& cam0_R_p_c,
                                         Eigen::Matrix3d& cam1_R_p_c) {
+  MSCKF_PROFILE("frontend/track_features/integrate_imu");
   cam0_R_p_c.setIdentity();
   cam1_R_p_c.setIdentity();
 
@@ -448,6 +476,7 @@ template <typename PointT>
 void ImageProcessor::stereo_match(const std::vector<PointT>& cam0_points_in,
                                   std::vector<cv::Point2f>& cam1_points,
                                   std::vector<unsigned char>& inlier_markers) const {
+  MSCKF_PROFILE("frontend/*/stereo_match");
   using Scalar = decltype(PointT::x);
   cam1_points.clear();
   inlier_markers.clear();
@@ -468,12 +497,12 @@ void ImageProcessor::stereo_match(const std::vector<PointT>& cam0_points_in,
   // KLT works on float32 points.
   const std::vector<cv::Point2f> cam0_points(cam0_points_in.begin(), cam0_points_in.end());
   cam1_points.assign(cam1_points_predicted.begin(), cam1_points_predicted.end());
-  lk(curr_cam0_img_, curr_cam1_img_, cam0_points, cam1_points, inlier_markers);
+  lk(curr_cam0_pyramid_, curr_cam1_pyramid_, cam0_points, cam1_points, inlier_markers);
 
   // Track back from cam1 to cam0 for a left-right consistency check.
   std::vector<cv::Point2f> cam0_points_back = cam0_points;
   std::vector<unsigned char> back_status;
-  lk(curr_cam1_img_, curr_cam0_img_, cam1_points, cam0_points_back, back_status);
+  lk(curr_cam1_pyramid_, curr_cam0_pyramid_, cam1_points, cam0_points_back, back_status);
 
   for (size_t i = 0; i < cam0_points.size(); ++i) {
     const float dx = cam0_points[i].x - cam0_points_back[i].x;

@@ -12,3 +12,4 @@ __pycache__/
 # Large or regenerable result files
 cpp/results/**/features_*.txt
 cpp/results/**/run.log
+cpp/results/**/*.prof

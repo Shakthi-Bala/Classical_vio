@@ -15,10 +15,14 @@ node, accuracy from the unchanged [`Code/evaluate.py`](../Code/evaluate.py):
 | ATE RMSE (Umeyama SE3) | 0.1289 m | 0.1284 m |
 | Rotation RMSE | 1.98 deg | 1.98 deg |
 | RPE @ 10 m | 1.49 % / 1.41 deg | 1.49 % / 1.39 deg |
-| Front end, mean / p95 | 15.95 / 17.48 ms | 8.87 / 9.70 ms |
-| Back end, mean / p95 | 18.59 / 44.02 ms | 3.55 / 7.83 ms |
-| Total per frame, mean / p95 | 34.54 / 60.22 ms | 12.42 / 16.72 ms |
-| Real-time factor | 1.45x | **4.02x** |
+| Front end, mean / p95 | 15.95 / 17.48 ms | 6.34 / 8.71 ms |
+| Back end, mean / p95 | 18.59 / 44.02 ms | 2.29 / 5.06 ms |
+| Total per frame, mean / p95 | 34.54 / 60.22 ms | **8.63 / 12.32 ms** |
+| Real-time factor | 1.45x | **5.80x** (one core) |
+
+C++ numbers are after the profiling-driven optimizations below (OpenCV limited to
+one thread with `--threads 1`). The straight port, before optimizing, ran at
+12.42 ms per frame (4.02x).
 
 ![latency](results/latency.png)
 
@@ -42,10 +46,36 @@ Python-vs-C++ claims. Running several sequences (MH_02–05, V1) would give a fa
 accuracy picture than one run of one sequence.
 
 **Where the speed-up comes from:** the front end is mostly OpenCV (FAST, pyramidal
-LK, undistortion), which is already C++ under Python, so it only gains 1.8x (from
-removing per-point Python loops). The filter is pure numpy on small matrices and
-gains 5.2x. The first C++ frame takes ~260 ms (OpenCV start-up); it is included in
-the statistics and is the "max" value.
+LK, undistortion), which is already C++ under Python, so the straight port only
+gained 1.8x there (from removing per-point Python loops); the filter is pure numpy
+on small matrices and gained 5.2x. The first C++ frame takes ~200 ms (OpenCV
+start-up); it is included in the statistics and is the "max" value.
+
+## Profiling and optimization (12.4 -> 8.6 ms per frame)
+
+`perf` is blocked on the compute nodes (`perf_event_paranoid = 4`, no sudo), so the
+profile comes from two tools that need no privileges:
+
+- **Stage timers**: [`profiler.h`](include/msckf/profiler.h), one `MSCKF_PROFILE("name")`
+  line per stage; `main_euroc` prints the table and writes `profile_stages.csv`.
+- **Sampling profiler**: gperftools (`LD_PRELOAD=libprofiler.so`, 1 kHz), converted to
+  a flame graph by [`scripts/gperf_to_folded.py`](scripts/gperf_to_folded.py) (addr2line)
+  and FlameGraph: [before](results/profile/flame_before.svg),
+  [after](results/profile/flame_after.svg).
+
+![stages](results/profile/stages_before_after.png)
+
+| Change | Why it was slow | Effect | Output |
+|---|---|---|---|
+| Build each image pyramid once ([`create_image_pyramids`](src/image_processor.cpp)) | 5 KLT calls per frame each rebuilt both pyramids: 10 builds for 3 images | front end 9.25 -> 7.63 ms | bit-identical features and trajectory |
+| `P - K (H P)` instead of `(I - K H) P` in [`measurement_update`](src/msckf.cpp) | an extra 141 x 141 x 141 product, and `H P` computed twice | update 2.06 -> 1.51 ms | trajectory equal to 1e-9 m |
+| Gating on the non-zero columns of `H` only ([`gating_test`](src/msckf.cpp)) | `H P H^T` with a 141-wide `H` that is zero outside 2-20 camera blocks | gating 0.86 -> 0.12 ms | trajectory equal to 1e-9 m |
+| `--threads 1` for OpenCV | ~100 points per KLT call are too few to pay for threads | front end 7.6 -> 7.3 ms (before the two back-end changes) | identical |
+
+What is left: KLT optical flow (stereo L-R forward + backward, and temporal) is now
+about half of a frame. Cutting it further means changing the algorithm (fewer LK
+iterations, skip the backward check), which changes the results, so it belongs to
+the quirk/ablation step, not to "same output, faster".
 
 ## Build
 

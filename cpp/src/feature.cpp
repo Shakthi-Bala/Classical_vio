@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <vector>
+#include "msckf/profiler.h"
 
 namespace msckf {
 
@@ -84,6 +85,7 @@ bool Feature::check_motion(const CamStateServer& cam_states) const {
 }
 
 bool Feature::initialize_position(const CamStateServer& cam_states) {
+  MSCKF_PROFILE("backend/*/triangulation");
   std::vector<Isometry3d> cam_poses;
   std::vector<Eigen::Vector2d> measurements;
 
