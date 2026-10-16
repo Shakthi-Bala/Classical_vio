@@ -42,13 +42,13 @@ class ImageProcessor {
   void prune_features();
   FeatureMsg publish() const;
 
+  // Stereo-matches new detections, bins the matches into grid cells and adds
+  // the strongest grid_min_feature_num of each cell as new features.
+  void add_stereo_features(const std::vector<cv::KeyPoint>& keypoints);
+
   // Mean gyro rotation between the previous and current image, as rotations
   // taking a vector from the previous to the current cam0 / cam1 frame.
   void integrate_imu_data(Eigen::Matrix3d& cam0_R_p_c, Eigen::Matrix3d& cam1_R_p_c);
-
-  std::vector<cv::Point2f> predict_feature_tracking(const std::vector<cv::Point2f>& input_pts,
-                                                    const Eigen::Matrix3d& R_p_c,
-                                                    const Eigen::Vector4d& intrinsics) const;
 
   // Finds each cam0 point in cam1. PointT is cv::Point2d for freshly detected
   // points and cv::Point2f for tracked ones, because the Python code runs the
@@ -59,30 +59,17 @@ class ImageProcessor {
                     std::vector<cv::Point2f>& cam1_points,
                     std::vector<unsigned char>& inlier_markers) const;
 
-  // Pixel -> undistorted normalized coordinates (optionally rotated by R).
-  template <typename PointT>
-  std::vector<PointT> undistort_points(const std::vector<PointT>& pts_in,
-                                       const Eigen::Vector4d& intrinsics,
-                                       const std::string& distortion_model,
-                                       const Eigen::Vector4d& distortion_coeffs,
-                                       const Eigen::Matrix3d& rectification_matrix =
-                                           Eigen::Matrix3d::Identity()) const;
-
-  // Normalized coordinates -> distorted pixels.
-  template <typename PointT>
-  std::vector<PointT> distort_points(const std::vector<PointT>& pts_in,
-                                     const Eigen::Vector4d& intrinsics,
-                                     const std::string& distortion_model,
-                                     const Eigen::Vector4d& distortion_coeffs) const;
-
-  void get_grid_size(const cv::Mat& img, int& grid_height, int& grid_width) const;
-
   // Optical flow with the parameters of config.py's lk_params, on prebuilt pyramids.
   void lk(const std::vector<cv::Mat>& prev_pyramid, const std::vector<cv::Mat>& next_pyramid,
           const std::vector<cv::Point2f>& prev_pts, std::vector<cv::Point2f>& next_pts,
           std::vector<unsigned char>& status) const;
 
+  // Grid cell index of a cam0 pixel.
+  int grid_cell(const cv::Point2f& p) const;
+
   Config config_;
+  int grid_height_ = 0;
+  int grid_width_ = 0;
   bool is_first_img_ = true;
   FeatureID next_feature_id_ = 0;
   cv::Ptr<cv::FastFeatureDetector> detector_;
@@ -90,7 +77,6 @@ class ImageProcessor {
 
   double prev_timestamp_ = 0.0;
   double curr_timestamp_ = 0.0;
-  cv::Mat prev_cam0_img_;
   cv::Mat curr_cam0_img_;
   cv::Mat curr_cam1_img_;
 
@@ -105,9 +91,9 @@ class ImageProcessor {
   GridFeatures prev_features_;
   GridFeatures curr_features_;
 
-  // Extrinsics: take a vector from the camera frame to the IMU frame.
-  Eigen::Matrix3d R_cam0_imu_, R_cam1_imu_;
-  Eigen::Vector3d t_cam0_imu_, t_cam1_imu_;
+  // Camera -> IMU extrinsics (fixed; the filter estimates its own copy).
+  CameraExtrinsics cam0_;
+  CameraExtrinsics cam1_;
 };
 
 }  // namespace msckf

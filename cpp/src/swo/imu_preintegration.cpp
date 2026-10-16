@@ -47,13 +47,6 @@ void ImuPreintegration::integrate(double dt, const Eigen::Vector3d& acc,
   integrate_sample(samples_.back());
 }
 
-void ImuPreintegration::append(const ImuPreintegration& next) {
-  for (const Sample& s : next.samples_) {
-    samples_.push_back(s);
-    integrate_sample(s);
-  }
-}
-
 void ImuPreintegration::repropagate(const Eigen::Vector3d& ba, const Eigen::Vector3d& bg) {
   ba_lin = ba;
   bg_lin = bg;

@@ -8,6 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -22,8 +23,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../.. msckf_core)
 
 add_executable(vio_node src/vio_node.cpp)
 target_link_libraries(vio_node msckf)
-target_compile_options(vio_node PRIVATE -Wall -Wextra)
-ament_target_dependencies(vio_node rclcpp sensor_msgs nav_msgs geometry_msgs tf2_ros)
+target_compile_options(vio_node PRIVATE -Wall -Wextra -Wpedantic)
+ament_target_dependencies(vio_node builtin_interfaces rclcpp sensor_msgs nav_msgs geometry_msgs tf2_ros)
 
 install(TARGETS vio_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})

@@ -28,12 +28,7 @@ class MSCKF : public Estimator {
 
   void imu_callback(const ImuMsg& imu_msg) override;
 
-  // Returns the new pose, or nothing while the filter is still initializing.
   std::optional<VioResult> feature_callback(const FeatureMsg& feature_msg) override;
-
-  const IMUState& imu_state() const { return state_server_.imu_state; }
-  const Eigen::MatrixXd& state_cov() const { return state_server_.state_cov; }
-  size_t num_cam_states() const { return state_server_.cam_states.size(); }
 
  private:
   struct StateServer {
@@ -81,7 +76,7 @@ class MSCKF : public Estimator {
   std::vector<double> chi_squared_test_table_;   // index = degrees of freedom
 
   // Class attributes of IMUState in Python.
-  Eigen::Vector3d gravity_ = Eigen::Vector3d(0.0, 0.0, -9.81);
+  Eigen::Vector3d gravity_;   // set from the static IMU samples
   Isometry3d T_imu_body_;
   StateID next_imu_state_id_ = 0;
 

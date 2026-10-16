@@ -1,5 +1,6 @@
 #include "msckf/config.h"
 
+#include <filesystem>
 #include <stdexcept>
 #include <vector>
 
@@ -48,12 +49,8 @@ void read_camera(const YAML::Node& node, CameraConfig& cam) {
   read_matrix(node, "T_imu_cam", cam.T_imu_cam);
 }
 
-}  // namespace
-
-Config load_config(const std::string& yaml_path) {
-  const YAML::Node n = YAML::LoadFile(yaml_path);
-  Config c;
-
+// Applies every key present in `n` on top of `c`.
+void apply(const YAML::Node& n, Config& c) {
   if (const YAML::Node o = n["optimization"]) {
     OptimizationConfig& oc = c.optimization_config;
     read(o, "translation_threshold", oc.translation_threshold);
@@ -69,7 +66,6 @@ Config load_config(const std::string& yaml_path) {
   read(n, "grid_min_feature_num", c.grid_min_feature_num);
   read(n, "grid_max_feature_num", c.grid_max_feature_num);
   read(n, "fast_threshold", c.fast_threshold);
-  read(n, "ransac_threshold", c.ransac_threshold);
   read(n, "stereo_threshold", c.stereo_threshold);
   read(n, "max_iteration", c.max_iteration);
   read(n, "track_precision", c.track_precision);
@@ -77,7 +73,6 @@ Config load_config(const std::string& yaml_path) {
   read(n, "patch_size", c.patch_size);
 
   read(n, "gravity_acc", c.gravity_acc);
-  read(n, "frame_rate", c.frame_rate);
   read(n, "max_cam_state_size", c.max_cam_state_size);
   read(n, "position_std_threshold", c.position_std_threshold);
   read(n, "rotation_threshold", c.rotation_threshold);
@@ -121,16 +116,12 @@ Config load_config(const std::string& yaml_path) {
     read(s, "init_vel_sigma", w.init_vel_sigma);
     read(s, "init_acc_bias_sigma", w.init_acc_bias_sigma);
     read(s, "init_gyro_bias_sigma", w.init_gyro_bias_sigma);
-    read(s, "min_vision_landmarks", w.min_vision_landmarks);
-    read(s, "reset_min_tracked", w.reset_min_tracked);
-    read(s, "reset_pos_sigma", w.reset_pos_sigma);
-    read(s, "reset_rot_sigma", w.reset_rot_sigma);
     read(s, "debug_log", w.debug_log);
   }
 
   if (const YAML::Node f = n["fixes"]) {
     read(f, "epipolar_full_dot", c.fixes.epipolar_full_dot);
-    read(f, "lm_upstream_loops", c.optimization_config.upstream_lm_loops);
+    read(f, "lm_upstream_loops", c.optimization_config.lm_upstream_loops);
     read(f, "chi2_95", c.fixes.chi2_95);
     read(f, "oc_upstream", c.fixes.oc_upstream);
     read(f, "normalize_quaternion", c.fixes.normalize_quaternion);
@@ -142,7 +133,25 @@ Config load_config(const std::string& yaml_path) {
   read_camera(n["cam1"], c.cam1);
   read_matrix(n, "T_cn_cnm1", c.T_cn_cnm1);
   read_matrix(n, "T_imu_body", c.T_imu_body);
+}
 
+}  // namespace
+
+CameraExtrinsics camera_to_imu(const CameraConfig& cam) {
+  // General 4x4 inverse, as config.py's np.linalg.inv (keeps bit parity).
+  const Eigen::Matrix4d T_cam_imu = cam.T_imu_cam.inverse();
+  return {T_cam_imu.topLeftCorner<3, 3>(), T_cam_imu.topRightCorner<3, 1>()};
+}
+
+Config load_config(const std::string& yaml_path) {
+  const YAML::Node n = YAML::LoadFile(yaml_path);
+  Config c;
+  if (n["base"]) {
+    const std::filesystem::path base =
+        std::filesystem::path(yaml_path).parent_path() / n["base"].as<std::string>();
+    c = load_config(base.string());
+  }
+  apply(n, c);
   return c;
 }
 
@@ -156,7 +165,7 @@ void enable_fix(Config& c, const std::string& name) {
     }
   };
   set("epipolar_full_dot", c.fixes.epipolar_full_dot);
-  set("lm_upstream_loops", c.optimization_config.upstream_lm_loops);
+  set("lm_upstream_loops", c.optimization_config.lm_upstream_loops);
   set("chi2_95", c.fixes.chi2_95);
   set("oc_upstream", c.fixes.oc_upstream);
   set("normalize_quaternion", c.fixes.normalize_quaternion);

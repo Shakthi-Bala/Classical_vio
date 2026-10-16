@@ -7,6 +7,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -16,6 +17,9 @@ def generate_launch_description():
         DeclareLaunchArgument('output_dir', default_value='', description='TUM + timing output'),
         DeclareLaunchArgument('skip_seconds', default_value='0.0',
                               description='ignore data before first IMU stamp + this'),
+        DeclareLaunchArgument('opencv_threads', default_value='1'),
+        DeclareLaunchArgument('reliable_qos', default_value='true',
+                              description='false for drivers that publish best effort'),
     ]
     node = Node(
         package='msckf_vio_ros',
@@ -26,9 +30,10 @@ def generate_launch_description():
             'config': LaunchConfiguration('config'),
             'backend': LaunchConfiguration('backend'),
             'output_dir': LaunchConfiguration('output_dir'),
-            'skip_seconds': LaunchConfiguration('skip_seconds'),
+            # Typed explicitly: "skip_seconds:=40" would otherwise arrive as an int.
+            'skip_seconds': ParameterValue(LaunchConfiguration('skip_seconds'), value_type=float),
+            'opencv_threads': ParameterValue(LaunchConfiguration('opencv_threads'), value_type=int),
+            'reliable_qos': ParameterValue(LaunchConfiguration('reliable_qos'), value_type=bool),
         }],
-        remappings=[('imu0', '/imu0'), ('cam0/image_raw', '/cam0/image_raw'),
-                    ('cam1/image_raw', '/cam1/image_raw')],
     )
     return LaunchDescription(args + [node])

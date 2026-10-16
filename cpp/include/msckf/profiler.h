@@ -1,8 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <map>
 #include <string>
+#include <vector>
 
 // Minimal per-stage wall-clock profiler.
 //
@@ -45,6 +48,17 @@ class Scope {
   Stat& stat_;
   std::chrono::steady_clock::time_point t0_;
 };
+
+// Nearest-rank percentile, p in [0, 100]. Shared by main_euroc and the ROS
+// node so their latency tables are computed the same way.
+inline double percentile(std::vector<double> v, double p) {
+  if (v.empty()) {
+    return 0.0;
+  }
+  std::sort(v.begin(), v.end());
+  const auto idx = static_cast<size_t>(std::lround(p / 100.0 * static_cast<double>(v.size() - 1)));
+  return v[std::min(idx, v.size() - 1)];
+}
 
 }  // namespace msckf::prof
 

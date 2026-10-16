@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <deque>
 #include <fstream>
 #include <map>
@@ -32,6 +33,8 @@
 
 namespace msckf::swo {
 
+using KeyFrameID = std::int64_t;
+
 class SlidingWindowEstimator final : public Estimator {
  public:
   explicit SlidingWindowEstimator(const Config& config);
@@ -46,13 +49,12 @@ class SlidingWindowEstimator final : public Estimator {
     long marginalizations = 0;
     long landmarks_optimized = 0;   // summed over solves
     long outliers_removed = 0;
-    long resets = 0;   // window restarts after tracking loss
   };
   const Stats& stats() const { return stats_; }
 
  private:
   struct KeyFrame {
-    long id = 0;
+    KeyFrameID id = 0;
     double timestamp = 0.0;
     double p[3] = {0.0, 0.0, 0.0};
     double q[4] = {0.0, 0.0, 0.0, 1.0};   // Eigen order (x, y, z, w)
@@ -68,31 +70,30 @@ class SlidingWindowEstimator final : public Estimator {
   };
 
   struct Landmark {
-    long anchor_id = 0;
+    KeyFrameID anchor_id = 0;
     Eigen::Vector3d bearing = Eigen::Vector3d::UnitZ();   // (x, y, 1) in anchor cam0
     double inv_depth[1] = {1.0};
-    std::map<long, Eigen::Vector4d> obs;                  // keyframe id -> observation
+    std::map<KeyFrameID, Eigen::Vector4d> obs;
   };
+
+  using CostFunctions = std::vector<std::unique_ptr<ceres::CostFunction>>;
 
   void initialize_gravity_and_bias();
   void initialize_first_keyframe(const FeatureMsg& msg);
-  // Clears window, map and priors; one keyframe at the given state, held by a
-  // Gaussian prior with the given position / rotation sigmas.
-  void start_window(const FeatureMsg& msg, const Eigen::Vector3d& p, const Eigen::Quaterniond& q,
-                    const Eigen::Vector3d& v, const Eigen::Vector3d& ba,
-                    const Eigen::Vector3d& bg, double pos_sigma, double rot_sigma);
-  int tracked_from_last_keyframe(const FeatureMsg& msg) const;
   void integrate_imu_until(double t);
   bool is_keyframe(const FeatureMsg& msg) const;
-  void add_keyframe(const FeatureMsg& msg, const Eigen::Vector3d& p, const Eigen::Quaterniond& q,
-                    const Eigen::Vector3d& v);
+  // Appends a keyframe with the given state and the message's observations.
+  void push_keyframe(const FeatureMsg& msg, const Eigen::Vector3d& p, const Eigen::Quaterniond& q,
+                     const Eigen::Vector3d& v, const Eigen::Vector3d& ba,
+                     const Eigen::Vector3d& bg);
   void add_observations(KeyFrame& kf, const FeatureMsg& msg);
   std::optional<double> stereo_inverse_depth(const Eigen::Vector4d& z) const;
 
+  KeyFrame* keyframe(KeyFrameID id);
+  bool in_window(KeyFrameID id) const;
   bool usable(const Landmark& lm) const;
-  KeyFrame* keyframe(long id) const;
-  // Visual factors of one landmark: (cost, blocks) pairs; caller owns the costs.
-  void landmark_factors(Landmark& lm, std::vector<ResidualBlockInfo>& out) const;
+  // Visual factors of one landmark; the cost functions are moved into `owned`.
+  void landmark_factors(Landmark& lm, std::vector<ResidualBlockInfo>& out, CostFunctions& owned);
   void repropagate_if_needed(KeyFrame& prev, KeyFrame& kf) const;
 
   // Returns the number of landmarks in the problem.
@@ -103,8 +104,7 @@ class SlidingWindowEstimator final : public Estimator {
   VioResult make_result(double t, const Eigen::Vector3d& p, const Eigen::Quaterniond& q,
                         const Eigen::Vector3d& v) const;
 
-  Config config_;
-  SwoConfig sc_;
+  SwoConfig cfg_;
   ImuNoise noise_;
 
   // Extrinsics.
@@ -115,7 +115,7 @@ class SlidingWindowEstimator final : public Estimator {
   // IMU.
   std::vector<ImuMsg> imu_buffer_;
   bool is_gravity_set_ = false;
-  Eigen::Vector3d gravity_ = Eigen::Vector3d(0.0, 0.0, -9.81);
+  Eigen::Vector3d gravity_;
   Eigen::Quaterniond q_init_ = Eigen::Quaterniond::Identity();
   Eigen::Vector3d gyro_bias_init_ = Eigen::Vector3d::Zero();
   double last_imu_t_ = 0.0;
@@ -125,7 +125,7 @@ class SlidingWindowEstimator final : public Estimator {
 
   // Window and map.
   std::deque<std::unique_ptr<KeyFrame>> window_;
-  long next_kf_id_ = 0;
+  KeyFrameID next_kf_id_ = 0;
   std::map<FeatureID, Landmark> landmarks_;
 
   // Priors and shared Ceres objects (the problems do not own them).
@@ -136,7 +136,6 @@ class SlidingWindowEstimator final : public Estimator {
 
   Stats stats_;
   std::ofstream debug_log_;
-  bool last_solve_used_vision_ = false;   // gates marginalization / outlier checks
   struct SolveInfo {
     double initial_cost = 0.0, final_cost = 0.0;
     int iterations = 0;

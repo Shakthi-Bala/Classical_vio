@@ -3,12 +3,15 @@
 <package format="3">
   <name>msckf_vio_ros</name>
   <version>0.1.0</version>
-  <description>ROS 2 node for the C++ stereo MSCKF / sliding-window VIO in ../..</description>
+  <description>ROS 2 node for the stereo VIO (MSCKF and sliding-window back ends)</description>
   <maintainer email="sbalamurugan@wpi.edu">sbalamurugan</maintainer>
   <license>BSD-3-Clause</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Eigen, OpenCV, yaml-cpp, Boost and Ceres come from the conda env
+       (RoboStack); the core library is built from ../.. as a subproject. -->
+  <depend>builtin_interfaces</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>

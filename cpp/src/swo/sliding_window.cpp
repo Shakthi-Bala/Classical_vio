@@ -1,6 +1,5 @@
 #include "msckf/swo/sliding_window.h"
 
-#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <set>
@@ -8,22 +7,27 @@
 #include <ceres/problem.h>
 #include <ceres/solver.h>
 
+#include "msckf/math_utils.h"
 #include "msckf/profiler.h"
 #include "msckf/swo/factors.h"
 
 namespace msckf::swo {
 
-SlidingWindowEstimator::SlidingWindowEstimator(const Config& config)
-    : config_(config), sc_(config.swo) {
-  noise_.gyro_noise = config.gyro_noise;
-  noise_.acc_noise = config.acc_noise;
-  noise_.gyro_bias_noise = config.gyro_bias_noise;
-  noise_.acc_bias_noise = config.acc_bias_noise;
+namespace {
 
-  // config T_imu_cam takes a vector from the IMU frame to the camera frame.
-  const Eigen::Matrix4d T_c0b = config.cam0.T_imu_cam;
-  R_bc0_ = T_c0b.topLeftCorner<3, 3>().transpose();
-  t_bc0_ = -R_bc0_ * T_c0b.topRightCorner<3, 1>();
+// Re-integrate a preintegration when the bias estimate moved this far from
+// its linearization point (the first-order correction is no longer good).
+// Same thresholds as VINS-Fusion.
+constexpr double kRepropagateAccBias = 0.10;    // [m/s^2]
+constexpr double kRepropagateGyroBias = 0.01;   // [rad/s]
+
+}  // namespace
+
+SlidingWindowEstimator::SlidingWindowEstimator(const Config& config)
+    : cfg_(config.swo), noise_(ImuNoise::from_config(config)) {
+  const CameraExtrinsics cam0 = camera_to_imu(config.cam0);
+  R_bc0_ = cam0.R_cam_imu;
+  t_bc0_ = cam0.t_cam_imu;
   R_c1c0_ = config.T_cn_cnm1.topLeftCorner<3, 3>();
   t_c1c0_ = config.T_cn_cnm1.topRightCorner<3, 1>();
   // T_bc1 = T_bc0 * T_c0c1.
@@ -32,9 +36,9 @@ SlidingWindowEstimator::SlidingWindowEstimator(const Config& config)
   focal_ = config.cam0.intrinsics(0);
 
   // Robust loss on whitened residuals (1 unit = pixel_sigma pixels).
-  huber_ = std::make_unique<ceres::HuberLoss>(sc_.huber_px / sc_.pixel_sigma);
-  if (!sc_.debug_log.empty()) {
-    debug_log_.open(sc_.debug_log);
+  huber_ = std::make_unique<ceres::HuberLoss>(cfg_.huber_px / cfg_.pixel_sigma);
+  if (!cfg_.debug_log.empty()) {
+    debug_log_.open(cfg_.debug_log);
     debug_log_ << "t,landmarks,initial_cost,final_cost,iterations,dp_vs_imu,dv_vs_imu,"
                   "speed,outliers_removed\n";
   }
@@ -44,14 +48,13 @@ SlidingWindowEstimator::~SlidingWindowEstimator() = default;
 
 void SlidingWindowEstimator::imu_callback(const ImuMsg& imu_msg) {
   imu_buffer_.push_back(imu_msg);
-  if (!is_gravity_set_ && imu_buffer_.size() >= 200) {
+  if (!is_gravity_set_ && imu_buffer_.size() >= kStaticInitImuSamples) {
     initialize_gravity_and_bias();
     is_gravity_set_ = true;
   }
 }
 
 void SlidingWindowEstimator::initialize_gravity_and_bias() {
-  // Same static initialization as the MSCKF: mean of the first 200 samples.
   Eigen::Vector3d acc_sum = Eigen::Vector3d::Zero(), gyro_sum = Eigen::Vector3d::Zero();
   for (const ImuMsg& m : imu_buffer_) {
     acc_sum += m.linear_acceleration;
@@ -66,17 +69,8 @@ void SlidingWindowEstimator::initialize_gravity_and_bias() {
 }
 
 std::optional<double> SlidingWindowEstimator::stereo_inverse_depth(const Eigen::Vector4d& z) const {
-  // Depth d along the cam0 ray from the cam1 observation (two-view least squares).
-  const Eigen::Vector3d m = R_c1c0_ * Eigen::Vector3d(z(0), z(1), 1.0);
-  const Eigen::Vector2d z1(z(2), z(3));
-  const Eigen::Vector2d a = m.head<2>() - z1 * m(2);
-  const Eigen::Vector2d b = z1 * t_c1c0_(2) - t_c1c0_.head<2>();
-  const double denom = a.dot(a);
-  if (denom < 1e-12) {
-    return std::nullopt;
-  }
-  const double depth = a.dot(b) / denom;
-  if (depth < sc_.min_depth || depth > sc_.max_depth) {
+  const double depth = two_view_depth(R_c1c0_, t_c1c0_, z.head<2>(), z.tail<2>());
+  if (!std::isfinite(depth) || depth < cfg_.min_depth || depth > cfg_.max_depth) {
     return std::nullopt;
   }
   return 1.0 / depth;
@@ -118,18 +112,22 @@ void SlidingWindowEstimator::initialize_first_keyframe(const FeatureMsg& msg) {
   imu_buffer_.erase(imu_buffer_.begin(), imu_buffer_.begin() + used);
   last_imu_t_ = msg.timestamp;
 
-  start_window(msg, Eigen::Vector3d::Zero(), q_init_, Eigen::Vector3d::Zero(),
-               Eigen::Vector3d::Zero(), gyro_bias_init_, sc_.init_pos_sigma, sc_.init_rot_sigma);
+  push_keyframe(msg, Eigen::Vector3d::Zero(), q_init_, Eigen::Vector3d::Zero(),
+                Eigen::Vector3d::Zero(), gyro_bias_init_);
+  KeyFrame& kf = *window_.back();
+  Eigen::Matrix<double, 15, 1> sigma;
+  sigma << Eigen::Vector3d::Constant(cfg_.init_pos_sigma),
+      Eigen::Vector3d::Constant(cfg_.init_rot_sigma), Eigen::Vector3d::Constant(cfg_.init_vel_sigma),
+      Eigen::Vector3d::Constant(cfg_.init_acc_bias_sigma),
+      Eigen::Vector3d::Constant(cfg_.init_gyro_bias_sigma);
+  init_prior_.reset(StatePriorFactor::create(kf.position(), kf.orientation(),
+                                             Eigen::Map<Eigen::Matrix<double, 9, 1>>(kf.sb),
+                                             sigma));
 }
 
-void SlidingWindowEstimator::start_window(const FeatureMsg& msg, const Eigen::Vector3d& p,
-                                          const Eigen::Quaterniond& q, const Eigen::Vector3d& v,
-                                          const Eigen::Vector3d& ba, const Eigen::Vector3d& bg,
-                                          double pos_sigma, double rot_sigma) {
-  window_.clear();
-  landmarks_.clear();
-  marg_prior_.reset();
-
+void SlidingWindowEstimator::push_keyframe(const FeatureMsg& msg, const Eigen::Vector3d& p,
+                                           const Eigen::Quaterniond& q, const Eigen::Vector3d& v,
+                                           const Eigen::Vector3d& ba, const Eigen::Vector3d& bg) {
   auto kf = std::make_unique<KeyFrame>();
   kf->id = next_kf_id_++;
   kf->timestamp = msg.timestamp;
@@ -138,18 +136,9 @@ void SlidingWindowEstimator::start_window(const FeatureMsg& msg, const Eigen::Ve
   kf->velocity() = v;
   kf->acc_bias() = ba;
   kf->gyro_bias() = bg;
-
-  Eigen::Matrix<double, 15, 1> sigma;
-  sigma << Eigen::Vector3d::Constant(pos_sigma),
-      Eigen::Vector3d::Constant(rot_sigma), Eigen::Vector3d::Constant(sc_.init_vel_sigma),
-      Eigen::Vector3d::Constant(sc_.init_acc_bias_sigma),
-      Eigen::Vector3d::Constant(sc_.init_gyro_bias_sigma);
-  init_prior_.reset(StatePriorFactor::create(kf->position(), kf->orientation(),
-                                             Eigen::Map<Eigen::Matrix<double, 9, 1>>(kf->sb),
-                                             sigma));
-
+  kf->preint = std::move(cur_preint_);   // null for the first keyframe
+  cur_preint_ = std::make_unique<ImuPreintegration>(ba, bg, noise_);
   add_observations(*kf, msg);
-  cur_preint_ = std::make_unique<ImuPreintegration>(kf->acc_bias(), kf->gyro_bias(), noise_);
   window_.push_back(std::move(kf));
   ++stats_.keyframes;
 }
@@ -177,15 +166,6 @@ void SlidingWindowEstimator::add_observations(KeyFrame& kf, const FeatureMsg& ms
   }
 }
 
-int SlidingWindowEstimator::tracked_from_last_keyframe(const FeatureMsg& msg) const {
-  const KeyFrame& last = *window_.back();
-  int tracked = 0;
-  for (const FeatureMeasurement& f : msg.features) {
-    tracked += static_cast<int>(last.obs.count(f.id));
-  }
-  return tracked;
-}
-
 bool SlidingWindowEstimator::is_keyframe(const FeatureMsg& msg) const {
   const KeyFrame& last = *window_.back();
   int tracked = 0;
@@ -201,30 +181,12 @@ bool SlidingWindowEstimator::is_keyframe(const FeatureMsg& msg) const {
   if (tracked == 0) {
     return true;
   }
-  return parallax / tracked >= sc_.kf_parallax_px ||
-         tracked < sc_.kf_min_tracked_ratio * static_cast<double>(last.obs.size()) ||
-         msg.timestamp - last.timestamp >= sc_.kf_max_interval;
+  return parallax / tracked >= cfg_.kf_parallax_px ||
+         tracked < cfg_.kf_min_tracked_ratio * static_cast<double>(last.obs.size()) ||
+         msg.timestamp - last.timestamp >= cfg_.kf_max_interval;
 }
 
-void SlidingWindowEstimator::add_keyframe(const FeatureMsg& msg, const Eigen::Vector3d& p,
-                                          const Eigen::Quaterniond& q, const Eigen::Vector3d& v) {
-  KeyFrame& last = *window_.back();
-  auto kf = std::make_unique<KeyFrame>();
-  kf->id = next_kf_id_++;
-  kf->timestamp = msg.timestamp;
-  kf->position() = p;
-  kf->orientation() = q.normalized();
-  kf->velocity() = v;
-  kf->acc_bias() = last.acc_bias();
-  kf->gyro_bias() = last.gyro_bias();
-  kf->preint = std::move(cur_preint_);
-  cur_preint_ = std::make_unique<ImuPreintegration>(kf->acc_bias(), kf->gyro_bias(), noise_);
-  add_observations(*kf, msg);
-  window_.push_back(std::move(kf));
-  ++stats_.keyframes;
-}
-
-SlidingWindowEstimator::KeyFrame* SlidingWindowEstimator::keyframe(long id) const {
+SlidingWindowEstimator::KeyFrame* SlidingWindowEstimator::keyframe(KeyFrameID id) {
   for (const auto& kf : window_) {
     if (kf->id == id) {
       return kf.get();
@@ -233,38 +195,48 @@ SlidingWindowEstimator::KeyFrame* SlidingWindowEstimator::keyframe(long id) cons
   return nullptr;
 }
 
-bool SlidingWindowEstimator::usable(const Landmark& lm) const {
-  return lm.obs.size() >= 2 && lm.obs.begin()->first == lm.anchor_id &&
-         keyframe(lm.anchor_id) != nullptr;
+bool SlidingWindowEstimator::in_window(KeyFrameID id) const {
+  for (const auto& kf : window_) {
+    if (kf->id == id) {
+      return true;
+    }
+  }
+  return false;
 }
 
-void SlidingWindowEstimator::landmark_factors(Landmark& lm,
-                                              std::vector<ResidualBlockInfo>& out) const {
-  const double sqrt_info = focal_ / sc_.pixel_sigma;
+bool SlidingWindowEstimator::usable(const Landmark& lm) const {
+  return lm.obs.size() >= 2 && lm.obs.begin()->first == lm.anchor_id && in_window(lm.anchor_id);
+}
+
+void SlidingWindowEstimator::landmark_factors(Landmark& lm, std::vector<ResidualBlockInfo>& out,
+                                              CostFunctions& owned) {
+  const double sqrt_info = focal_ / cfg_.pixel_sigma;
   KeyFrame* anchor = keyframe(lm.anchor_id);
+  auto add = [&](ceres::CostFunction* cost, std::vector<double*> blocks) {
+    owned.emplace_back(cost);
+    out.push_back({cost, huber_.get(), std::move(blocks)});
+  };
   for (const auto& [kf_id, z] : lm.obs) {
     if (kf_id == lm.anchor_id) {
-      out.push_back({StereoAnchorFactor::create(lm.bearing, z.tail<2>(), R_c1c0_, t_c1c0_,
-                                                sqrt_info),
-                     huber_.get(), {lm.inv_depth}});
+      add(StereoAnchorFactor::create(lm.bearing, z.tail<2>(), R_c1c0_, t_c1c0_, sqrt_info),
+          {lm.inv_depth});
       continue;
     }
     KeyFrame* kf = keyframe(kf_id);
-    out.push_back({new ReprojectionFactorAnalytic(lm.bearing, z.head<2>(), R_bc0_, t_bc0_,
-                                                  R_bc0_, t_bc0_, sqrt_info),
-                   huber_.get(), {anchor->p, anchor->q, kf->p, kf->q, lm.inv_depth}});
-    out.push_back({new ReprojectionFactorAnalytic(lm.bearing, z.tail<2>(), R_bc0_, t_bc0_,
-                                                  R_bc1_, t_bc1_, sqrt_info),
-                   huber_.get(), {anchor->p, anchor->q, kf->p, kf->q, lm.inv_depth}});
+    const std::vector<double*> blocks = {anchor->p, anchor->q, kf->p, kf->q, lm.inv_depth};
+    add(new ReprojectionFactorAnalytic(lm.bearing, z.head<2>(), R_bc0_, t_bc0_, R_bc0_, t_bc0_,
+                                       sqrt_info),
+        blocks);
+    add(new ReprojectionFactorAnalytic(lm.bearing, z.tail<2>(), R_bc0_, t_bc0_, R_bc1_, t_bc1_,
+                                       sqrt_info),
+        blocks);
   }
 }
 
 void SlidingWindowEstimator::repropagate_if_needed(KeyFrame& prev, KeyFrame& kf) const {
-  // The first-order bias correction is only valid near the linearization
-  // point; re-integrate when the bias estimate moved away (VINS thresholds).
   ImuPreintegration& pre = *kf.preint;
-  if ((prev.acc_bias() - pre.ba_lin).norm() > 0.10 ||
-      (prev.gyro_bias() - pre.bg_lin).norm() > 0.01) {
+  if ((prev.acc_bias() - pre.ba_lin).norm() > kRepropagateAccBias ||
+      (prev.gyro_bias() - pre.bg_lin).norm() > kRepropagateGyroBias) {
     pre.repropagate(prev.acc_bias(), prev.gyro_bias());
   }
 }
@@ -276,7 +248,7 @@ long SlidingWindowEstimator::optimize() {
   problem_options.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
   problem_options.manifold_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
   ceres::Problem problem(problem_options);
-  std::vector<std::unique_ptr<ceres::CostFunction>> owned;
+  CostFunctions owned;
 
   for (const auto& kf : window_) {
     problem.AddParameterBlock(kf->p, 3);
@@ -298,24 +270,17 @@ long SlidingWindowEstimator::optimize() {
     problem.AddResidualBlock(owned.back().get(), nullptr, prev.p, prev.q, prev.sb, kf.p, kf.q,
                              kf.sb);
   }
-  long n_usable = 0;
-  for (const auto& [id, lm] : landmarks_) {
-    n_usable += usable(lm) ? 1 : 0;
-  }
-  const bool use_vision = n_usable >= sc_.min_vision_landmarks;
-  last_solve_used_vision_ = use_vision;
   long n_landmarks = 0;
   for (auto& [id, lm] : landmarks_) {
-    if (!use_vision || !usable(lm)) {
+    if (!usable(lm)) {
       continue;
     }
     std::vector<ResidualBlockInfo> factors;
-    landmark_factors(lm, factors);
+    landmark_factors(lm, factors, owned);
     problem.AddParameterBlock(lm.inv_depth, 1);
-    problem.SetParameterLowerBound(lm.inv_depth, 0, 1.0 / sc_.max_depth);
-    problem.SetParameterUpperBound(lm.inv_depth, 0, 1.0 / sc_.min_depth);
+    problem.SetParameterLowerBound(lm.inv_depth, 0, 1.0 / cfg_.max_depth);
+    problem.SetParameterUpperBound(lm.inv_depth, 0, 1.0 / cfg_.min_depth);
     for (const ResidualBlockInfo& f : factors) {
-      owned.emplace_back(f.cost);
       problem.AddResidualBlock(f.cost, f.loss, f.blocks);
     }
     ++n_landmarks;
@@ -325,17 +290,13 @@ long SlidingWindowEstimator::optimize() {
   ceres::Solver::Options options;
   options.linear_solver_type = ceres::DENSE_SCHUR;   // landmarks eliminated first
   options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
-  options.max_num_iterations = sc_.max_iterations;
+  options.max_num_iterations = cfg_.max_iterations;
   options.num_threads = 1;
   options.logging_type = ceres::SILENT;
   ceres::Solver::Summary summary;
   ceres::Solve(options, &problem, &summary);
   last_solve_ = {summary.initial_cost, summary.final_cost,
                  static_cast<int>(summary.iterations.size())};
-
-  for (const auto& kf : window_) {
-    kf->orientation().normalize();
-  }
   return n_landmarks;
 }
 
@@ -354,25 +315,22 @@ void SlidingWindowEstimator::erase_landmark(FeatureID id) {
 
 void SlidingWindowEstimator::remove_outliers() {
   MSCKF_PROFILE("swo/remove_outliers");
-  if (!last_solve_used_vision_) {
-    return;   // landmarks were not optimized, so their errors mean nothing yet
-  }
   std::vector<FeatureID> bad;
   for (auto& [id, lm] : landmarks_) {
     if (!usable(lm)) {
       continue;
     }
     std::vector<ResidualBlockInfo> factors;
-    landmark_factors(lm, factors);
+    CostFunctions owned;
+    landmark_factors(lm, factors, owned);
     // Whitened residual * pixel_sigma = pixels.
     double sum_px = 0.0;
     for (const ResidualBlockInfo& f : factors) {
       double r[2];
       f.cost->Evaluate(f.blocks.data(), r, nullptr);
-      sum_px += std::hypot(r[0], r[1]) * sc_.pixel_sigma;
-      delete f.cost;
+      sum_px += std::hypot(r[0], r[1]) * cfg_.pixel_sigma;
     }
-    if (sum_px / static_cast<double>(factors.size()) > sc_.outlier_px) {
+    if (sum_px / static_cast<double>(factors.size()) > cfg_.outlier_px) {
       bad.push_back(id);
     }
   }
@@ -388,7 +346,7 @@ void SlidingWindowEstimator::marginalize_oldest() {
   KeyFrame& kf1 = *window_[1];
 
   Marginalizer marginalizer;
-  std::vector<std::unique_ptr<ceres::CostFunction>> owned;
+  CostFunctions owned;
   if (marg_prior_) {
     marginalizer.add({marg_prior_.get(), nullptr, marg_prior_->block_pointers()});
   }
@@ -400,13 +358,12 @@ void SlidingWindowEstimator::marginalize_oldest() {
 
   std::set<double*> drop = {kf0.p, kf0.q, kf0.sb};
   for (auto& [id, lm] : landmarks_) {
-    if (!last_solve_used_vision_ || lm.anchor_id != kf0.id || !usable(lm)) {
-      continue;   // only landmarks that were part of the last solve
+    if (lm.anchor_id != kf0.id || !usable(lm)) {
+      continue;
     }
     std::vector<ResidualBlockInfo> factors;
-    landmark_factors(lm, factors);
+    landmark_factors(lm, factors, owned);
     for (const ResidualBlockInfo& f : factors) {
-      owned.emplace_back(f.cost);
       marginalizer.add(f);
     }
     drop.insert(lm.inv_depth);
@@ -415,10 +372,8 @@ void SlidingWindowEstimator::marginalize_oldest() {
   for (const auto& kf : window_) {
     quaternion_blocks.insert(kf->q);
   }
-  // The old priors are inputs of this step, so replace them only afterwards.
-  std::unique_ptr<MarginalizationFactor> new_prior =
-      marginalizer.marginalize(drop, quaternion_blocks);
-  marg_prior_ = std::move(new_prior);
+  // The old prior is one of the inputs; it is replaced only after the call.
+  marg_prior_ = marginalizer.marginalize(drop, quaternion_blocks);
   init_prior_.reset();
   ++stats_.marginalizations;
 
@@ -444,7 +399,7 @@ void SlidingWindowEstimator::marginalize_oldest() {
     const Eigen::Vector3d p_c0 = R_bc0_.transpose() * (p_b - t_bc0_);
     lm.anchor_id = new_anchor->id;
     lm.bearing = Eigen::Vector3d(z(0), z(1), 1.0);
-    if (p_c0.z() > sc_.min_depth && p_c0.z() < sc_.max_depth) {
+    if (p_c0.z() > cfg_.min_depth && p_c0.z() < cfg_.max_depth) {
       lm.inv_depth[0] = 1.0 / p_c0.z();
     } else if (const std::optional<double> inv_depth = stereo_inverse_depth(z)) {
       lm.inv_depth[0] = *inv_depth;
@@ -487,23 +442,12 @@ std::optional<VioResult> SlidingWindowEstimator::feature_callback(const FeatureM
   Eigen::Quaterniond q;
   cur_preint_->predict(last.position(), Eigen::Quaterniond(last.orientation()), last.velocity(),
                        gravity_, p, q, v);
-
-  if (tracked_from_last_keyframe(msg) < sc_.reset_min_tracked) {
-    // Tracking lost: the window cannot be tied to the new features, so restart
-    // it from the IMU prediction instead of letting a handful of fresh
-    // landmarks drag the whole window around.
-    const Eigen::Vector3d ba = last.acc_bias(), bg = last.gyro_bias();
-    start_window(msg, p, q, v, ba, bg, sc_.reset_pos_sigma, sc_.reset_rot_sigma);
-    ++stats_.resets;
-    return make_result(msg.timestamp, p, q, v);
-  }
-
   if (!is_keyframe(msg)) {
     // Not enough new information: report the IMU prediction.
     return make_result(msg.timestamp, p, q, v);
   }
 
-  add_keyframe(msg, p, q, v);
+  push_keyframe(msg, p, q, v, last.acc_bias(), last.gyro_bias());
   const long n_landmarks = optimize();
   const long outliers_before = stats_.outliers_removed;
   remove_outliers();
@@ -519,7 +463,7 @@ std::optional<VioResult> SlidingWindowEstimator::feature_callback(const FeatureM
   }
   const VioResult result = make_result(msg.timestamp, kf.position(),
                                        Eigen::Quaterniond(kf.orientation()), kf.velocity());
-  if (static_cast<int>(window_.size()) > sc_.window_size) {
+  if (static_cast<int>(window_.size()) > cfg_.window_size) {
     marginalize_oldest();
   }
   return result;

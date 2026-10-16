@@ -5,6 +5,8 @@
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 
+#include "msckf/config.h"
+
 // On-manifold IMU preintegration (Forster et al., "On-Manifold Preintegration
 // for Real-Time Visual-Inertial Odometry", T-RO 2017), Euler integration.
 //
@@ -20,10 +22,14 @@ namespace msckf::swo {
 
 struct ImuNoise {
   // Continuous-time densities, as variances (same meaning as config.py).
-  double gyro_noise = 0.005 * 0.005;
-  double acc_noise = 0.05 * 0.05;
-  double gyro_bias_noise = 0.001 * 0.001;
-  double acc_bias_noise = 0.01 * 0.01;
+  double gyro_noise = 0.0;
+  double acc_noise = 0.0;
+  double gyro_bias_noise = 0.0;
+  double acc_bias_noise = 0.0;
+
+  static ImuNoise from_config(const Config& c) {
+    return {c.gyro_noise, c.acc_noise, c.gyro_bias_noise, c.acc_bias_noise};
+  }
 };
 
 class ImuPreintegration {
@@ -33,9 +39,6 @@ class ImuPreintegration {
 
   // Integrates one measurement held constant for dt seconds.
   void integrate(double dt, const Eigen::Vector3d& acc, const Eigen::Vector3d& gyro);
-
-  // Appends all samples of `next` (used when merging two intervals).
-  void append(const ImuPreintegration& next);
 
   // Re-integrates every stored sample with a new bias linearization point.
   void repropagate(const Eigen::Vector3d& ba_lin, const Eigen::Vector3d& bg_lin);

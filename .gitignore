@@ -1,24 +1,18 @@
-# C++ build artifacts
-cpp/build/
-cpp/build-*/
-cpp/install/
+# C++ builds (cpp/build, cpp/build-dev, ...)
+cpp/build*/
 .cache/
 compile_commands.json
 
 # Python
 __pycache__/
-*.pyc
 
-# Large or regenerable result files
+# Large or regenerable results
 cpp/results/**/features_*.txt
-cpp/results/**/run.log
 cpp/results/**/*.prof
+cpp/results/**/*.log
 cpp/results/ablation/*/
 cpp/results/sequences/
 cpp/results/slurm/
 cpp/results/swo_dev/
-cpp/build-*/
 cpp/results/backends/*/*/timing_cpp.csv
 cpp/results/backends/*/*/profile_stages.csv
-cpp/results/ros2/*/node.log
-cpp/results/ros2/*/play.log

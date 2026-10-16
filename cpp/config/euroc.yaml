@@ -15,8 +15,7 @@ grid_col: 5
 grid_min_feature_num: 3
 grid_max_feature_num: 5
 fast_threshold: 15
-ransac_threshold: 3        # unused (2-point RANSAC is disabled, as in image.py)
-stereo_threshold: 5
+stereo_threshold: 5        # epipolar error [px]
 max_iteration: 30          # LK iterations
 track_precision: 0.01      # LK epsilon
 pyramid_levels: 3
@@ -24,11 +23,10 @@ patch_size: 15
 
 # MSCKF
 gravity_acc: 9.81
-frame_rate: 20
 max_cam_state_size: 20
-position_std_threshold: 8.0
-rotation_threshold: 0.2618
-translation_threshold: 0.4
+position_std_threshold: 8.0   # online reset above this [m]
+rotation_threshold: 0.2618    # keyframe pruning [rad] (15 deg)
+translation_threshold: 0.4    # keyframe pruning [m]
 tracking_rate_threshold: 0.5
 
 # Noise, given as standard deviations (squared on load, like config.py)
@@ -43,8 +41,8 @@ velocity: [0.0, 0.0, 0.0]
 velocity_cov: 0.25
 gyro_bias_cov: 0.01
 acc_bias_cov: 0.01
-extrinsic_rotation_cov: 3.0462e-4
-extrinsic_translation_cov: 2.5e-5
+extrinsic_rotation_cov: 3.0462e-4   # (1 deg)^2
+extrinsic_translation_cov: 2.5e-5   # (5 mm)^2
 
 # Calibration (matrices are row-major lists)
 cam0:

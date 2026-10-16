@@ -1,3 +1,0 @@
-[INFO] [1792162363.369841240] [msckf_vio]: backend msckf, config /home/sbalamurugan/Classical_vio/cpp/config/euroc_fixed.yaml
-[INFO] [1792162557.927375346] [rclcpp]: signal_handler(SIGINT/SIGTERM)
-[msckf_vio] frames 2882 | process mean 10.31 p50 9.80 p95 13.13 ms | end-to-end mean 10.91 p50 10.03 p95 14.15 ms

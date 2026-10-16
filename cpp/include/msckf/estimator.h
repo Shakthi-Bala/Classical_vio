@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 
 #include <Eigen/Dense>
@@ -11,6 +12,10 @@
 // so main_euroc can run either with the same front end.
 
 namespace msckf {
+
+// Both back ends start by averaging this many IMU samples (1 s at 200 Hz),
+// assuming the sensor is static, for gravity direction and gyro bias.
+inline constexpr size_t kStaticInitImuSamples = 200;
 
 struct VioResult {
   double timestamp = 0.0;

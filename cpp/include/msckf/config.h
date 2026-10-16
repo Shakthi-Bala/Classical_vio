@@ -5,7 +5,8 @@
 #include <Eigen/Dense>
 
 // All tunable parameters. C++ port of Code/config.py.
-// Defaults equal the Python values; config/euroc.yaml can override any of them.
+// Defaults equal the Python values; a YAML file (config/euroc.yaml) can
+// override any of them.
 
 namespace msckf {
 
@@ -17,9 +18,9 @@ struct OptimizationConfig {
   double initial_damping = 1e-3;
   int outer_loop_max_iteration = 5;
   int inner_loop_max_iteration = 5;
-  // Fix for quirk 2 (see Fixes below): run at least one LM step per outer
+  // Fix for quirk 2 (README "Python quirks"): at least one LM step per outer
   // iteration, like upstream's do-while loops.
-  bool upstream_lm_loops = false;
+  bool lm_upstream_loops = false;
 };
 
 // Opt-in fixes for behaviours of the Python code that the port reproduces on
@@ -46,22 +47,11 @@ struct SwoConfig {
   double max_depth = 40.0;             // [m]
   double outlier_px = 3.0;             // drop a landmark above this mean reprojection error
   // Start-up prior on the first keyframe (standard deviations).
-  double init_pos_sigma = 1e-3;
+  double init_pos_sigma = 1e-3;        // [m]
   double init_rot_sigma = 1e-3;        // [rad]
-  double init_vel_sigma = 0.5;
-  double init_acc_bias_sigma = 0.1;
-  double init_gyro_bias_sigma = 0.01;
-  // Fewer usable landmarks than this: solve with IMU + prior only, so a
-  // handful of freshly initialized landmarks cannot drag the window around
-  // (tracking loss in V2_03).
-  int min_vision_landmarks = 0;   // 0 = off; gating made V2_03 worse (15.2 vs 5.0 m)
-  // Tracking loss: if fewer of the last keyframe's landmarks are seen, restart
-  // the window from the current IMU-predicted state (like the MSCKF's online
-  // reset). 0 = off; on V2_03 restarting made things worse (it discards the
-  // velocity estimate). Position/rotation prior of the restarted window:
-  int reset_min_tracked = 0;
-  double reset_pos_sigma = 0.01;
-  double reset_rot_sigma = 0.01;
+  double init_vel_sigma = 0.5;         // [m/s]
+  double init_acc_bias_sigma = 0.1;    // [m/s^2]
+  double init_gyro_bias_sigma = 0.01;  // [rad/s]
   std::string debug_log;               // if set: one CSV line per keyframe solve
 };
 
@@ -70,9 +60,17 @@ struct CameraConfig {
   Eigen::Vector4d intrinsics = Eigen::Vector4d::Zero();          // fx, fy, cx, cy
   Eigen::Vector4d distortion_coeffs = Eigen::Vector4d::Zero();   // k1, k2, p1, p2
   Eigen::Vector2i resolution = Eigen::Vector2i::Zero();          // width, height
-  // Same matrix and name as config.py's T_imu_cam0 / T_imu_cam1.
+  // Takes a vector from the IMU frame to this camera's frame (Kalibr T_cam_imu;
+  // the name is config.py's).
   Eigen::Matrix4d T_imu_cam = Eigen::Matrix4d::Identity();
 };
+
+// Camera -> IMU transform, derived from CameraConfig::T_imu_cam.
+struct CameraExtrinsics {
+  Eigen::Matrix3d R_cam_imu;   // takes a vector from the camera frame to the IMU frame
+  Eigen::Vector3d t_cam_imu;   // camera origin in the IMU frame
+};
+CameraExtrinsics camera_to_imu(const CameraConfig& cam);
 
 struct Config {
   OptimizationConfig optimization_config;
@@ -85,20 +83,18 @@ struct Config {
   int grid_min_feature_num = 3;
   int grid_max_feature_num = 5;
   int fast_threshold = 15;
-  double ransac_threshold = 3;   // unused: 2-point RANSAC is disabled in image.py
-  double stereo_threshold = 5;
-  int max_iteration = 30;
-  double track_precision = 0.01;
+  double stereo_threshold = 5;    // epipolar error [px]
+  int max_iteration = 30;         // KLT
+  double track_precision = 0.01;  // KLT
   int pyramid_levels = 3;
   int patch_size = 15;
 
   // MSCKF.
   double gravity_acc = 9.81;
-  double frame_rate = 20;
   int max_cam_state_size = 20;
-  double position_std_threshold = 8.0;
-  double rotation_threshold = 0.2618;
-  double translation_threshold = 0.4;
+  double position_std_threshold = 8.0;   // online reset above this [m]
+  double rotation_threshold = 0.2618;    // keyframe pruning [rad] (15 deg)
+  double translation_threshold = 0.4;    // keyframe pruning [m]
   double tracking_rate_threshold = 0.5;
 
   // Noise (variances, not standard deviations).
@@ -113,8 +109,8 @@ struct Config {
   double velocity_cov = 0.25;
   double gyro_bias_cov = 0.01;
   double acc_bias_cov = 0.01;
-  double extrinsic_rotation_cov = 3.0462e-4;
-  double extrinsic_translation_cov = 2.5e-5;
+  double extrinsic_rotation_cov = 3.0462e-4;   // (1 deg)^2
+  double extrinsic_translation_cov = 2.5e-5;   // (5 mm)^2
 
   // Calibration.
   CameraConfig cam0;
@@ -126,6 +122,8 @@ struct Config {
 };
 
 // Loads a YAML file. Keys that are missing keep their default value above.
+// A top-level `base: other.yaml` (relative to this file) is loaded first, so a
+// variant only needs the keys it changes.
 Config load_config(const std::string& yaml_path);
 
 // Turns on one fix by name ("epipolar_full_dot", "lm_upstream_loops", ...,

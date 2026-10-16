@@ -11,14 +11,9 @@ namespace msckf::swo {
 
 namespace {
 
+// Eigenvalues below this are treated as zero (directions the factors do not
+// observe), both when inverting H_mm and when factoring the prior.
 constexpr double kEigenvalueEpsilon = 1e-8;
-
-// d Minus(q, q_lin) / d q, with Minus = Log(q_lin^-1 q) ~ 2 vec(q_lin^-1 q).
-Eigen::Matrix<double, 3, 4> minus_jacobian(const Eigen::Quaterniond& q_lin) {
-  Eigen::Matrix<double, 3, 4, Eigen::RowMajor> J;
-  RightQuaternionManifold().MinusJacobian(q_lin.coeffs().data(), J.data());
-  return J;
-}
 
 }  // namespace
 
@@ -170,12 +165,11 @@ std::unique_ptr<MarginalizationFactor> Marginalizer::marginalize(
       r *= residual_scaling;
     }
 
-    auto info_of = [&](double* ptr) -> const BlockInfo& { return infos.at(ptr); };
     for (size_t a = 0; a < f.blocks.size(); ++a) {
-      const BlockInfo& ia = info_of(f.blocks[a]);
+      const BlockInfo& ia = infos.at(f.blocks[a]);
       g.segment(ia.offset, ia.tangent) += J_tan[a].transpose() * r;
       for (size_t b = 0; b < f.blocks.size(); ++b) {
-        const BlockInfo& ib = info_of(f.blocks[b]);
+        const BlockInfo& ib = infos.at(f.blocks[b]);
         H.block(ia.offset, ib.offset, ia.tangent, ib.tangent) +=
             J_tan[a].transpose() * J_tan[b];
       }

@@ -106,6 +106,14 @@ Eigen::Vector4d from_two_vectors(const Eigen::Vector3d& v0_in,
   return quaternion_conjugate(q);  // Hamilton -> JPL
 }
 
+double two_view_depth(const Eigen::Matrix3d& R_21, const Eigen::Vector3d& t_21,
+                      const Eigen::Vector2d& z1, const Eigen::Vector2d& z2) {
+  const Eigen::Vector3d m = R_21 * Eigen::Vector3d(z1(0), z1(1), 1.0);
+  const Eigen::Vector2d a = m.head<2>() - z2 * m(2);
+  const Eigen::Vector2d b = z2 * t_21(2) - t_21.head<2>();
+  return a.dot(b) / a.dot(a);
+}
+
 Eigen::Matrix4d Isometry3d::matrix() const {
   Eigen::Matrix4d m = Eigen::Matrix4d::Identity();
   m.block<3, 3>(0, 0) = R;

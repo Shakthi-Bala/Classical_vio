@@ -1,16 +1,18 @@
 #pragma once
 
-#include <Eigen/Cholesky>
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 #include <ceres/autodiff_cost_function.h>
 #include <ceres/sized_cost_function.h>
 
+#include "msckf/math_utils.h"
 #include "msckf/swo/imu_preintegration.h"
 #include "msckf/swo/quaternion_manifold.h"
 
-// Cost functions of the sliding-window optimizer. All use ceres automatic
-// differentiation, so their Jacobians are exact by construction.
+// Cost functions of the sliding-window optimizer. The IMU, stereo-anchor and
+// prior factors use ceres automatic differentiation. Reprojection, by far the
+// most numerous, uses hand-derived Jacobians (ReprojectionFactorAnalytic); the
+// autodiff ReprojectionFactor is kept as the reference it is tested against.
 //
 // Parameter blocks per keyframe (Hamilton convention, body = IMU frame):
 //   p  [3]  position of the body in the world frame
@@ -40,11 +42,11 @@ class ImuFactor {
   }
 
   template <typename T>
-  bool operator()(const T* p_i_, const T* q_i_, const T* sb_i, const T* p_j_, const T* q_j_,
-                  const T* sb_j, T* residual) const {
+  bool operator()(const T* p_i_ptr, const T* q_i_ptr, const T* sb_i, const T* p_j_ptr,
+                  const T* q_j_ptr, const T* sb_j, T* residual) const {
     using Vec3 = Eigen::Matrix<T, 3, 1>;
-    const Eigen::Map<const Vec3> p_i(p_i_), p_j(p_j_);
-    const Eigen::Map<const Eigen::Quaternion<T>> q_i(q_i_), q_j(q_j_);
+    const Eigen::Map<const Vec3> p_i(p_i_ptr), p_j(p_j_ptr);
+    const Eigen::Map<const Eigen::Quaternion<T>> q_i(q_i_ptr), q_j(q_j_ptr);
     const Eigen::Map<const Vec3> v_i(sb_i), ba_i(sb_i + 3), bg_i(sb_i + 6);
     const Eigen::Map<const Vec3> v_j(sb_j), ba_j(sb_j + 3), bg_j(sb_j + 6);
 
@@ -99,11 +101,11 @@ class ReprojectionFactor {
         sqrt_info_(sqrt_info) {}
 
   template <typename T>
-  bool operator()(const T* p_a_, const T* q_a_, const T* p_j_, const T* q_j_,
+  bool operator()(const T* p_a_ptr, const T* q_a_ptr, const T* p_j_ptr, const T* q_j_ptr,
                   const T* inv_depth, T* residual) const {
     using Vec3 = Eigen::Matrix<T, 3, 1>;
-    const Eigen::Map<const Vec3> p_a(p_a_), p_j(p_j_);
-    const Eigen::Map<const Eigen::Quaternion<T>> q_a(q_a_), q_j(q_j_);
+    const Eigen::Map<const Vec3> p_a(p_a_ptr), p_j(p_j_ptr);
+    const Eigen::Map<const Eigen::Quaternion<T>> q_a(q_a_ptr), q_j(q_j_ptr);
 
     const Vec3 p_c0_a = bearing_.cast<T>() / inv_depth[0];
     const Vec3 p_b_a = R_bc0_.cast<T>() * p_c0_a + t_bc0_.cast<T>();
@@ -188,7 +190,7 @@ class ReprojectionFactorAnalytic final : public ceres::SizedCostFunction<2, 3, 4
     }
     if (jacobians[1] != nullptr) {
       Eigen::Map<J24> J(jacobians[1]);
-      J = (-A_Rjt * R_a * skew3(p_b_a)) * minus_jacobian(q_a);
+      J = (-A_Rjt * R_a * skew(p_b_a)) * minus_jacobian(q_a);
     }
     if (jacobians[2] != nullptr) {
       Eigen::Map<J23> J(jacobians[2]);
@@ -196,7 +198,7 @@ class ReprojectionFactorAnalytic final : public ceres::SizedCostFunction<2, 3, 4
     }
     if (jacobians[3] != nullptr) {
       Eigen::Map<J24> J(jacobians[3]);
-      J = (A * skew3(p_b_j)) * minus_jacobian(q_j);
+      J = (A * skew(p_b_j)) * minus_jacobian(q_j);
     }
     if (jacobians[4] != nullptr) {
       Eigen::Map<Eigen::Vector2d> J(jacobians[4]);
@@ -206,17 +208,6 @@ class ReprojectionFactorAnalytic final : public ceres::SizedCostFunction<2, 3, 4
   }
 
  private:
-  static Eigen::Matrix3d skew3(const Eigen::Vector3d& v) {
-    Eigen::Matrix3d S;
-    S << 0.0, -v.z(), v.y(), v.z(), 0.0, -v.x(), -v.y(), v.x(), 0.0;
-    return S;
-  }
-  static Eigen::Matrix<double, 3, 4> minus_jacobian(const Eigen::Quaterniond& q) {
-    Eigen::Matrix<double, 3, 4, Eigen::RowMajor> J;
-    RightQuaternionManifold().MinusJacobian(q.coeffs().data(), J.data());
-    return J;
-  }
-
   Eigen::Vector3d bearing_;
   Eigen::Vector2d z_;
   Eigen::Matrix3d R_bc0_;
@@ -269,10 +260,10 @@ class StatePriorFactor {
       : p0_(p0), q0_(q0), sb0_(sb0), inv_sigma_(sigma.cwiseInverse()) {}
 
   template <typename T>
-  bool operator()(const T* p_, const T* q_, const T* sb_, T* residual) const {
-    const Eigen::Map<const Eigen::Matrix<T, 3, 1>> p(p_);
-    const Eigen::Map<const Eigen::Quaternion<T>> q(q_);
-    const Eigen::Map<const Eigen::Matrix<T, 9, 1>> sb(sb_);
+  bool operator()(const T* p_ptr, const T* q_ptr, const T* sb_ptr, T* residual) const {
+    const Eigen::Map<const Eigen::Matrix<T, 3, 1>> p(p_ptr);
+    const Eigen::Map<const Eigen::Quaternion<T>> q(q_ptr);
+    const Eigen::Map<const Eigen::Matrix<T, 9, 1>> sb(sb_ptr);
     Eigen::Matrix<T, 15, 1> r;
     r.template segment<3>(0) = p - p0_.cast<T>();
     r.template segment<3>(3) = quaternion_log<T>(q0_.cast<T>().conjugate() * q);

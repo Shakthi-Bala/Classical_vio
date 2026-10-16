@@ -1,4 +1,5 @@
-// Runs the stereo MSCKF on a EuRoC sequence, offline and deterministic.
+// Runs a stereo VIO back end (MSCKF or sliding window) on a EuRoC sequence,
+// offline and deterministic.
 //
 //   main_euroc --path /path/to/MH_01_easy [--config config/euroc.yaml]
 //              [--out results/cpp] [--offset 40] [--max-frames N]
@@ -8,14 +9,14 @@
 //              [--backend msckf|swo]  (filter, or Ceres sliding-window optimizer)
 //
 // Outputs in --out:
-//   traj_cpp.txt     TUM trajectory: t tx ty tz qx qy qz qw (body in world)
-//   timing_cpp.csv   per-frame front-end / back-end time [ms]
+//   traj_cpp.txt        TUM trajectory: t tx ty tz qx qy qz qw (body in world)
+//   timing_cpp.csv      per-frame front-end / back-end time [ms]
+//   profile_stages.csv  per-stage time (MSCKF_PROFILE scopes)
 //
 // --dump-features also writes features_cpp.txt (same format as the Python dump)
 // so the two front ends can be compared.
 // --features replays a feature file written by scripts/run_python_reference.py
-// instead of running the C++ front end. That tests the C++ filter in isolation
-// (roadmap milestone M4).
+// instead of running the C++ front end, to test the back end in isolation.
 
 #include <algorithm>
 #include <chrono>
@@ -106,16 +107,8 @@ std::vector<msckf::FeatureMsg> read_feature_file(const std::string& file) {
   return msgs;
 }
 
-double percentile(std::vector<double> v, double p) {
-  if (v.empty()) {
-    return 0.0;
-  }
-  std::sort(v.begin(), v.end());
-  const size_t idx = static_cast<size_t>(p / 100.0 * (v.size() - 1) + 0.5);
-  return v[std::min(idx, v.size() - 1)];
-}
-
 void print_stats(const char* name, const std::vector<double>& ms) {
+  using msckf::prof::percentile;
   const double mean = std::accumulate(ms.begin(), ms.end(), 0.0) / std::max<size_t>(ms.size(), 1);
   std::printf("  %-9s mean %7.3f  p50 %7.3f  p95 %7.3f  max %8.3f  [ms]\n", name, mean,
               percentile(ms, 50), percentile(ms, 95), percentile(ms, 100));
@@ -230,7 +223,9 @@ int main(int argc, char** argv) {
         traj << line;
       }
 
-      if (processed == 0) first_t = t_img;
+      if (processed == 0) {
+        first_t = t_img;
+      }
       last_t = t_img;
       ++processed;
       if (args.max_frames > 0 && processed >= args.max_frames) {
@@ -245,17 +240,21 @@ int main(int argc, char** argv) {
                 processed, data_s, wall_s);
     std::printf("real-time factor (dataset s / compute s): %.2f\n", data_s / compute_s);
     std::printf("latency per frame%s:\n", replay ? " (back end only, replayed features)" : "");
-    if (!replay) print_stats("frontend", frontend_ms);
+    if (!replay) {
+      print_stats("frontend", frontend_ms);
+    }
     print_stats("backend", backend_ms);
     print_stats("total", total_ms);
 
     if (swo != nullptr) {
       const auto& st = swo->stats();
       std::printf("sliding window: %ld frames, %ld keyframes, %ld marginalizations, "
-                  "%.1f landmarks per solve, %ld outlier landmarks removed, %ld resets\n",
+                  "%.1f landmarks per solve, %ld outlier landmarks removed\n",
                   st.frames, st.keyframes, st.marginalizations,
-                  st.keyframes > 1 ? double(st.landmarks_optimized) / (st.keyframes - 1) : 0.0,
-                  st.outliers_removed, st.resets);
+                  st.keyframes > 1
+                      ? static_cast<double>(st.landmarks_optimized) / (st.keyframes - 1)
+                      : 0.0,
+                  st.outliers_removed);
     }
 
     // Per-stage breakdown (inclusive times; "*" = called from several stages).

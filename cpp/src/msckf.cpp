@@ -5,16 +5,37 @@
 #include <iterator>
 
 #include <boost/math/distributions/chi_squared.hpp>
+
 #include "msckf/profiler.h"
 
 namespace msckf {
+
+namespace {
+
+// chi2 table entries; a feature seen in all 20 camera states has 19 dof.
+constexpr int kMaxChi2Dof = 100;
+// find_redundant_cam_states compares the two states after the 4th newest with it.
+constexpr int kKeyStateFromNewest = 4;
+
+// The states in `ids` that observed `feature`.
+std::vector<StateID> observed_in(const Feature& feature, const std::vector<StateID>& ids) {
+  std::vector<StateID> out;
+  for (const StateID id : ids) {
+    if (feature.observations.count(id)) {
+      out.push_back(id);
+    }
+  }
+  return out;
+}
+
+}  // namespace
 
 MSCKF::MSCKF(const Config& config) : config_(config) {
   // Chi-squared table. NOTE (Python parity): chi2.ppf(0.05, dof) is the 5th
   // percentile, not the 95 % confidence the comment in msckf.py claims.
   // Upstream msckf_vio does the same. Kept on purpose.
-  chi_squared_test_table_.assign(100, 0.0);
-  for (int i = 1; i < 100; ++i) {
+  chi_squared_test_table_.assign(kMaxChi2Dof, 0.0);
+  for (int i = 1; i < kMaxChi2Dof; ++i) {
     const boost::math::chi_squared_distribution<double> dist(i);
     chi_squared_test_table_[i] = boost::math::quantile(dist, config_.fixes.chi2_95 ? 0.95 : 0.05);
   }
@@ -31,10 +52,10 @@ MSCKF::MSCKF(const Config& config) : config_(config) {
 
   gravity_ = Eigen::Vector3d(0.0, 0.0, -config_.gravity_acc);
 
-  // IMU-camera extrinsics.
-  const Eigen::Matrix4d T_cam0_imu = config_.cam0.T_imu_cam.inverse();
-  state_server_.imu_state.R_imu_cam0 = T_cam0_imu.topLeftCorner<3, 3>().transpose();
-  state_server_.imu_state.t_cam0_imu = T_cam0_imu.topRightCorner<3, 1>();
+  // IMU-camera extrinsics (estimated online).
+  const CameraExtrinsics cam0 = camera_to_imu(config_.cam0);
+  state_server_.imu_state.R_imu_cam0 = cam0.R_cam_imu.transpose();
+  state_server_.imu_state.t_cam0_imu = cam0.t_cam_imu;
 
   // Stereo extrinsics, shared with the features.
   Feature::R_cam0_cam1 = config_.T_cn_cnm1.topLeftCorner<3, 3>();
@@ -46,7 +67,7 @@ MSCKF::MSCKF(const Config& config) : config_(config) {
 void MSCKF::imu_callback(const ImuMsg& imu_msg) {
   // Buffered; processed when the next image arrives.
   imu_msg_buffer_.push_back(imu_msg);
-  if (!is_gravity_set_ && imu_msg_buffer_.size() >= 200) {
+  if (!is_gravity_set_ && imu_msg_buffer_.size() >= kStaticInitImuSamples) {
     initialize_gravity_and_bias();
     is_gravity_set_ = true;
   }
@@ -57,7 +78,7 @@ std::optional<VioResult> MSCKF::feature_callback(const FeatureMsg& feature_msg) 
   if (!is_gravity_set_) {
     return std::nullopt;
   }
-  // The frame of the first image is the world origin.
+  // Propagation starts at the first image.
   if (is_first_img_) {
     is_first_img_ = false;
     state_server_.imu_state.timestamp = feature_msg.timestamp;
@@ -212,7 +233,8 @@ void MSCKF::predict_new_state(double dt, const Eigen::Vector3d& gyro,
     // Python's version of this branch raises (ndarray @ scalar); this is the
     // intended small-angle formula from upstream msckf_vio.
     dq_dt = (Eigen::Matrix4d::Identity() + 0.5 * dt * Omega) * std::cos(gyro_norm * dt * 0.5) * q;
-    dq_dt2 = (Eigen::Matrix4d::Identity() + 0.25 * dt * Omega) * std::cos(gyro_norm * dt * 0.25) * q;
+    dq_dt2 =
+        (Eigen::Matrix4d::Identity() + 0.25 * dt * Omega) * std::cos(gyro_norm * dt * 0.25) * q;
   }
   const Eigen::Matrix3d dR_dt_transpose = to_rotation(dq_dt).transpose();
   const Eigen::Matrix3d dR_dt2_transpose = to_rotation(dq_dt2).transpose();
@@ -364,12 +386,7 @@ void MSCKF::feature_jacobian(FeatureID feature_id, const std::vector<StateID>& c
   MSCKF_PROFILE("backend/*/feature_jacobian");
   const Feature& feature = map_server_.at(feature_id);
 
-  std::vector<StateID> valid_cam_state_ids;
-  for (const StateID cam_id : cam_state_ids) {
-    if (feature.observations.count(cam_id)) {
-      valid_cam_state_ids.push_back(cam_id);
-    }
-  }
+  const std::vector<StateID> valid_cam_state_ids = observed_in(feature, cam_state_ids);
 
   const Eigen::Index rows = 4 * static_cast<Eigen::Index>(valid_cam_state_ids.size());
   const Eigen::Index cols = 21 + 6 * static_cast<Eigen::Index>(state_server_.cam_states.size());
@@ -434,6 +451,7 @@ void MSCKF::measurement_update(const Eigen::MatrixXd& H, const Eigen::VectorXd& 
   const Eigen::Matrix<double, 21, 1> delta_x_imu = delta_x.head<21>();
   IMUState& imu_state = state_server_.imu_state;
   const Eigen::Vector4d dq = small_angle_quaternion(delta_x_imu.segment<3>(0));
+  // quaternion_multiplication already normalizes; msckf.py normalizes again.
   imu_state.orientation = quaternion_multiplication(dq, imu_state.orientation);
   imu_state.orientation = quaternion_normalize(imu_state.orientation);
   imu_state.gyro_bias += delta_x_imu.segment<3>(3);
@@ -472,10 +490,15 @@ bool MSCKF::gating_test(const Eigen::MatrixXd& H, const Eigen::VectorXd& r, int 
       cols.push_back(c);
     }
   }
-  // Indexed view; Eigen::placeholders::all works in Eigen 3.4 and 5 (Eigen::all is gone in 5).
-  const Eigen::MatrixXd H_sub = H(Eigen::placeholders::all, cols);
-  const Eigen::MatrixXd P1 =
-      H_sub * state_server_.state_cov(cols, cols) * H_sub.transpose();
+  const Eigen::Index n = static_cast<Eigen::Index>(cols.size());
+  Eigen::MatrixXd H_sub(H.rows(), n), P_sub(n, n);
+  for (Eigen::Index a = 0; a < n; ++a) {
+    H_sub.col(a) = H.col(cols[a]);
+    for (Eigen::Index b = 0; b < n; ++b) {
+      P_sub(a, b) = state_server_.state_cov(cols[a], cols[b]);
+    }
+  }
+  const Eigen::MatrixXd P1 = H_sub * P_sub * H_sub.transpose();
   const Eigen::MatrixXd P2 =
       config_.observation_noise * Eigen::MatrixXd::Identity(H.rows(), H.rows());
   const double gamma = r.dot((P1 + P2).ldlt().solve(r));
@@ -559,7 +582,7 @@ std::vector<StateID> MSCKF::find_redundant_cam_states() const {
     cam_state_pairs.emplace_back(id, &cam_state);
   }
 
-  const int key_cam_state_idx = static_cast<int>(cam_state_pairs.size()) - 4;
+  const int key_cam_state_idx = static_cast<int>(cam_state_pairs.size()) - kKeyStateFromNewest;
   int cam_state_idx = key_cam_state_idx + 1;
   int first_cam_state_idx = 0;
 
@@ -580,12 +603,11 @@ std::vector<StateID> MSCKF::find_redundant_cam_states() const {
     if (angle < config_.rotation_threshold && distance < config_.translation_threshold &&
         tracking_rate_ > config_.tracking_rate_threshold) {
       rm_cam_state_ids.push_back(cam_state_pairs[cam_state_idx].first);
-      ++cam_state_idx;
     } else {
       rm_cam_state_ids.push_back(cam_state_pairs[first_cam_state_idx].first);
       ++first_cam_state_idx;
-      ++cam_state_idx;
     }
+    ++cam_state_idx;
   }
 
   std::sort(rm_cam_state_ids.begin(), rm_cam_state_ids.end());
@@ -603,12 +625,7 @@ void MSCKF::prune_cam_state_buffer() {
   // Pass 1: size the Jacobian; drop observations that cannot be used.
   Eigen::Index jacobian_row_size = 0;
   for (auto& [feature_id, feature] : map_server_) {
-    std::vector<StateID> involved_cam_state_ids;
-    for (const StateID cam_id : rm_cam_state_ids) {
-      if (feature.observations.count(cam_id)) {
-        involved_cam_state_ids.push_back(cam_id);
-      }
-    }
+    const std::vector<StateID> involved_cam_state_ids = observed_in(feature, rm_cam_state_ids);
     if (involved_cam_state_ids.empty()) {
       continue;
     }
@@ -635,12 +652,7 @@ void MSCKF::prune_cam_state_buffer() {
   Eigen::Index stack_count = 0;
 
   for (auto& [feature_id, feature] : map_server_) {
-    std::vector<StateID> involved_cam_state_ids;
-    for (const StateID cam_id : rm_cam_state_ids) {
-      if (feature.observations.count(cam_id)) {
-        involved_cam_state_ids.push_back(cam_id);
-      }
-    }
+    const std::vector<StateID> involved_cam_state_ids = observed_in(feature, rm_cam_state_ids);
     if (involved_cam_state_ids.empty()) {
       continue;
     }

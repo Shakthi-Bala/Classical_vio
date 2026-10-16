@@ -73,6 +73,7 @@ TEST(Feature, InitializationWithNoise) {
   for (int trial = 0; trial < 20; ++trial) {
     const Eigen::Vector3d feature(uniform(rng), uniform(rng), uniform(rng));
     bool status = false;
+    // Noise and tolerance as in feature_initialization_test.py.
     const Eigen::Vector3d estimate = triangulate(feature, 0.01, rng, &status);
     EXPECT_TRUE(status);
     EXPECT_LT((estimate - feature).norm(), 0.05) << "trial " << trial;
@@ -94,10 +95,11 @@ TEST(Feature, HuberWeight) {
   Eigen::Matrix<double, 2, 3> J;
   Eigen::Vector2d r;
   double w = 0.0;
-  // Point (0.1, 0.2) at depth 1; a small residual keeps the full weight.
+  const double eps = OptimizationConfig{}.huber_epsilon;   // 0.01
+  // Point (0.1, 0.2) at depth 1. Residual 0.005 < eps keeps the full weight.
   f.jacobian(identity, Eigen::Vector3d(0.1, 0.2, 1.0), Eigen::Vector2d(0.1, 0.205), J, r, w);
   EXPECT_DOUBLE_EQ(w, 1.0);
-  // A large residual is down-weighted.
+  // Residual 0.3 > eps: feature.py's weight eps / (2 |r|).
   f.jacobian(identity, Eigen::Vector3d(0.1, 0.2, 1.0), Eigen::Vector2d(0.1, 0.5), J, r, w);
-  EXPECT_LT(w, 1.0);
+  EXPECT_NEAR(w, eps / (2.0 * 0.3), 1e-12);
 }

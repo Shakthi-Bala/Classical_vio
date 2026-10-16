@@ -3,9 +3,16 @@
 #include <algorithm>
 #include <limits>
 #include <vector>
+
 #include "msckf/profiler.h"
 
 namespace msckf {
+
+namespace {
+// Bounds of the LM damping factor (feature.py / upstream msckf_vio).
+constexpr double kMinDamping = 1e-10;
+constexpr double kMaxDamping = 1e12;
+}  // namespace
 
 double Feature::cost(const Isometry3d& T_c0_ci, const Eigen::Vector3d& x,
                      const Eigen::Vector2d& z) const {
@@ -34,7 +41,8 @@ void Feature::jacobian(const Isometry3d& T_c0_ci, const Eigen::Vector3d& x,
   const Eigen::Vector2d z_hat(h1 / h3, h2 / h3);
   r = z_hat - z;
 
-  // Huber weight.
+  // Huber weight. NOTE (Python parity): feature.py uses eps / (2 e); upstream
+  // msckf_vio uses sqrt(2 eps / e) (quirk 9 in README).
   const double e = r.norm();
   if (e <= optimization_config.huber_epsilon) {
     w = 1.0;
@@ -46,12 +54,7 @@ void Feature::jacobian(const Isometry3d& T_c0_ci, const Eigen::Vector3d& x,
 Eigen::Vector3d Feature::generate_initial_guess(const Isometry3d& T_c1_c2,
                                                 const Eigen::Vector2d& z1,
                                                 const Eigen::Vector2d& z2) const {
-  // Least squares for the depth along the first ray.
-  const Eigen::Vector3d m = T_c1_c2.R * Eigen::Vector3d(z1(0), z1(1), 1.0);
-  const Eigen::Vector2d a = m.head<2>() - z2 * m(2);
-  const Eigen::Vector2d b = z2 * T_c1_c2.t(2) - T_c1_c2.t.head<2>();
-
-  const double depth = a.dot(b) / a.dot(a);
+  const double depth = two_view_depth(T_c1_c2.R, T_c1_c2.t, z1, z2);
   return Eigen::Vector3d(z1(0), z1(1), 1.0) * depth;
 }
 
@@ -73,7 +76,7 @@ bool Feature::check_motion(const CamStateServer& cam_states) const {
   // Direction of the feature when it was first observed, in the world frame.
   const Eigen::Vector4d& z_first = observations.at(first_id);
   Eigen::Vector3d feature_direction(z_first(0), z_first(1), 1.0);
-  feature_direction = feature_direction / feature_direction.norm();
+  feature_direction.normalize();
   feature_direction = first_cam_pose.R * feature_direction;
 
   // Translation between the first and last frame, perpendicular to the ray.
@@ -143,7 +146,7 @@ bool Feature::initialize_position(const CamStateServer& cam_states) {
   // NOTE (Python parity): `is_cost_reduced` is never reset inside the outer
   // loop, so after the first accepted step the inner loop does not run again.
   // Upstream msckf_vio uses do-while loops and keeps iterating. Kept as in
-  // feature.py by default; oc.upstream_lm_loops forces one step per outer
+  // feature.py by default; oc.lm_upstream_loops forces one step per outer
   // iteration like the do-while (quirk 2 in README).
   while (outer_loop_count < oc.outer_loop_max_iteration &&
          delta_norm > oc.estimation_precision) {
@@ -154,16 +157,11 @@ bool Feature::initialize_position(const CamStateServer& cam_states) {
       Eigen::Vector2d r;
       double w = 0.0;
       jacobian(cam_poses[i], solution, measurements[i], J, r, w);
-      if (w == 1.0) {
-        A += J.transpose() * J;
-        b += J.transpose() * r;
-      } else {
-        A += w * w * J.transpose() * J;
-        b += w * w * J.transpose() * r;
-      }
+      A += w * w * J.transpose() * J;
+      b += w * w * J.transpose() * r;
     }
 
-    bool force_step = oc.upstream_lm_loops;
+    bool force_step = oc.lm_upstream_loops;
     while (inner_loop_count < oc.inner_loop_max_iteration && (!is_cost_reduced || force_step)) {
       force_step = false;
       const Eigen::Vector3d delta =
@@ -180,10 +178,10 @@ bool Feature::initialize_position(const CamStateServer& cam_states) {
         is_cost_reduced = true;
         solution = new_solution;
         total_cost = new_cost;
-        lambda = std::max(lambda / 10.0, 1e-10);
+        lambda = std::max(lambda / 10.0, kMinDamping);
       } else {
         is_cost_reduced = false;
-        lambda = std::min(lambda * 10.0, 1e12);
+        lambda = std::min(lambda * 10.0, kMaxDamping);
       }
       ++inner_loop_count;
     }

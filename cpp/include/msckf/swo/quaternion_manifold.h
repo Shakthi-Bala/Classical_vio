@@ -53,6 +53,20 @@ Eigen::Matrix<T, 3, 1> quaternion_log(const Eigen::Quaternion<T>& q_in) {
   return T(2) * v;   // small angle
 }
 
+// d Minus(y, x) / d y at y = x (3 x 4): 2 * vec(x^-1 * dy). Also used to turn a
+// tangent-space Jacobian J_t into an ambient one, J_t * minus_jacobian(q): since
+// minus_jacobian(q) * PlusJacobian(q) = I, ceres recovers J_t from it.
+inline Eigen::Matrix<double, 3, 4> minus_jacobian(const Eigen::Quaterniond& q) {
+  Eigen::Matrix<double, 3, 4> J;
+  const Eigen::Quaterniond q_inv = q.inverse();
+  for (int k = 0; k < 4; ++k) {
+    Eigen::Quaterniond e(0.0, 0.0, 0.0, 0.0);
+    e.coeffs()(k) = 1.0;
+    J.col(k) = 2.0 * (q_inv * e).vec();
+  }
+  return J;
+}
+
 class RightQuaternionManifold final : public ceres::Manifold {
  public:
   int AmbientSize() const override { return 4; }
@@ -86,16 +100,9 @@ class RightQuaternionManifold final : public ceres::Manifold {
     return true;
   }
 
-  // d Minus(y, x) / d y at y = x  (3 x 4, row-major): 2 * vec(x^-1 * dy).
   bool MinusJacobian(const double* x, double* jacobian) const override {
-    const Eigen::Map<const Eigen::Quaterniond> q(x);
     Eigen::Map<Eigen::Matrix<double, 3, 4, Eigen::RowMajor>> J(jacobian);
-    const Eigen::Quaterniond q_inv = q.inverse();
-    for (int k = 0; k < 4; ++k) {
-      Eigen::Quaterniond e(0.0, 0.0, 0.0, 0.0);
-      e.coeffs()(k) = 1.0;
-      J.col(k) = 2.0 * (q_inv * e).vec();
-    }
+    J = minus_jacobian(Eigen::Quaterniond(Eigen::Map<const Eigen::Quaterniond>(x)));
     return true;
   }
 };

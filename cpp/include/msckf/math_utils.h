@@ -33,6 +33,12 @@ Eigen::Vector4d small_angle_quaternion(const Eigen::Vector3d& dtheta);
 Eigen::Vector4d from_two_vectors(const Eigen::Vector3d& v0,
                                  const Eigen::Vector3d& v1);
 
+// Least-squares depth along the ray (z1, 1) of view 1 such that the point
+// projects to z2 in view 2; (R_21, t_21) take a vector from view 1 to view 2.
+// Not finite if the rays are parallel.
+double two_view_depth(const Eigen::Matrix3d& R_21, const Eigen::Vector3d& t_21,
+                      const Eigen::Vector2d& z1, const Eigen::Vector2d& z2);
+
 // 3-D rigid transform: x' = R * x + t.
 struct Isometry3d {
   Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
