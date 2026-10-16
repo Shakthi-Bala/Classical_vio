@@ -1,7 +1,23 @@
-# Stereo MSCKF in C++17
+# Stereo visual-inertial odometry in C++17: MSCKF and sliding-window optimizer
 
-C++17 / Eigen / OpenCV port of the Python S-MSCKF in [`../Code`](../Code), checked
-module by module against the Python implementation. Phase 1 of [ROADMAP.md](ROADMAP.md).
+C++17 / Eigen / OpenCV / Ceres port of the Python S-MSCKF in [`../Code`](../Code),
+checked module by module against the Python, then extended with a Ceres
+sliding-window back end and a ROS 2 node. Plan and status: [ROADMAP.md](ROADMAP.md).
+
+| What | Result |
+|---|---|
+| Port fidelity | C++ filter = Python filter to **1e-9 m** on identical input; identical features on all 2882 frames |
+| Speed (MH_01, one core) | **8.6 ms/frame, 5.8x real time** (Python: 34.5 ms, 1.45x), after profiling-driven optimization |
+| Accuracy, 11 EuRoC sequences | Python-faithful MSCKF 0.615 m mean ATE -> **0.249 m** with the quirk fixes (0 failures) |
+| Sliding-window optimizer | **0.164 m** mean ATE on the 10 sequences it completes; fails on V2_03 |
+| ROS 2 node | real-time bag playback gives the **same trajectory as offline**; 10.9 ms end-to-end (MSCKF) |
+
+Sections: [Phase 1 port](#results-euroc-mh_01_easy) ·
+[Profiling](#profiling-and-optimization-124---86-ms-per-frame) ·
+[Quirk ablation](#python-quirk-ablation-11-euroc-sequences) ·
+[Sliding window](#sliding-window-optimizer-ceres-back-end) · [ROS 2](#ros-2-node) ·
+[Final comparison](#final-comparison-11-euroc-sequences) · [Build](#build) ·
+[Code tour](#code-tour-read-in-this-order)
 
 ![trajectory](results/trajectory_xy.png)
 
@@ -203,9 +219,24 @@ conda create -n vio_cpp -c conda-forge --override-channels \
 conda activate vio_cpp
 
 cd ~/Classical_vio
-cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build cpp/build
-ctest --test-dir cpp/build --output-on-failure     # 11 unit tests
+# Use the env's cmake: a pip cmake 3.25 in ~/.local/bin shadows it and cannot
+# configure Ceres' SuiteSparse dependency.
+$CONDA_PREFIX/bin/cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+$CONDA_PREFIX/bin/cmake --build cpp/build
+./cpp/build/msckf_tests                              # 16 unit tests
+```
+
+ROS 2 node (RoboStack Humble env `ros2_vio`, no sudo needed):
+
+```bash
+source /scratch/sbalamurugan/ros2_vio/activate.sh   # conda activate ros2_vio + PATH/ROS vars
+W=/scratch/sbalamurugan/ros2_vio/msckf_ws
+cd ~/Classical_vio/cpp
+colcon --log-base $W/log build --base-paths ros2 --build-base $W/build \
+    --install-base $W/install --cmake-args -DCMAKE_BUILD_TYPE=Release -G Ninja
+# node + bag in real time, on a compute node:
+sbatch -p short -c 4 --mem=16G -t 01:00:00 ros2/run_euroc_bag.sh \
+    /scratch/sbalamurugan/ros2_vio/bags/MH_01_easy_ros2 swo results/ros2/MH_01_easy_swo 40
 ```
 
 ## Run and reproduce the table
@@ -229,7 +260,11 @@ python scripts/run_python_reference.py --path $DATA --out results/python_replay 
 python scripts/compare.py --gt $DATA/mav0/state_groundtruth_estimate0/data.csv
 ```
 
-For timing, run on a compute node (`srun -p quick -c 4 ...`), not the shared login node.
+All sequences (SLURM): `scripts/run_sequence_job.sh` (Python + 9 ablation variants),
+`scripts/run_backend_job.sh` (one back end with `config/euroc_fixed.yaml`), then
+`scripts/ablation_table.py`, `scripts/plot_ablation.py` and `scripts/final_report.py`.
+Sliding window: add `--backend swo`. For timing, run on a compute node
+(`srun -p quick -c 4 ...`), not the shared login node.
 
 ## Code tour (read in this order)
 
