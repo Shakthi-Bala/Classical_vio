@@ -4,7 +4,10 @@ Goal: replicate the Python S-MSCKF in `../Code` in C++17/Eigen, verified piece b
 piece against the Python, then grow it into a profiled ROS 2 VIO with an
 optimization backend and a VINS-Fusion comparison.
 
-**Phase 1 (this branch, sim only):** faithful C++ port, EuRoC MH_01_easy, offline.
+**Phase 1 (this branch, sim only):** faithful C++ port, EuRoC MH_01_easy, offline. **DONE 2026-10-16:**
+C++ back end matches Python to 1e-9 m on identical input, front end gives identical
+features on all 2882 frames, ATE 0.1284 m (C++) vs 0.1289 m (Python, same deterministic
+replay), 4.02x vs 1.45x real time, 12.4 vs 34.5 ms per frame. See [README.md](README.md).
 **Phase 2:** Ceres sliding-window backend, ROS 2 node, profiling, VINS-Fusion baseline.
 **Phase 3 (later):** RealSense live / Jetson / PeAR drone.
 
@@ -21,6 +24,10 @@ optimization backend and a VINS-Fusion comparison.
 
 Phase 1 is done when the C++ reproduces the ATE within a few mm (same config,
 same 40 s offset) and runs faster than real time.
+
+Note: 0.1025 m came from the threaded `vio.py`, which is not reproducible (thread
+timing decides which IMU samples are in the buffer). The deterministic replay of the
+same Python code gives 0.1289 m; that is the number to compare against.
 
 ---
 
@@ -120,6 +127,8 @@ Use it to unstick yourself, not to copy from. It's ROS 1 and uses SuiteSparse SP
 
 ## 4. Phase 1 milestones (each ends with a test that compares against Python)
 
+Status: M0–M6 all done (2026-10-16).
+
 | # | Milestone | Done when |
 |---|---|---|
 | M0 | Env + CMake skeleton + one gtest passes | `ctest` green |
@@ -177,8 +186,8 @@ If it won't build, quote published numbers and label them as such in the table.
 
 | | ATE RMSE [m] | RPE@10m [%/deg] | Latency/frame mean·p95 [ms] | RTF (x86) | RTF (Jetson) |
 |---|---|---|---|---|---|
-| Python MSCKF | 0.1025 | 1.41 / 1.48 | | | n/a |
-| C++ MSCKF | | | | | |
+| Python MSCKF (deterministic replay) | 0.1289 | 1.49 / 1.41 | 34.5 · 60.2 | 1.45x | n/a |
+| C++ MSCKF | 0.1284 | 1.49 / 1.39 | 12.4 · 16.7 | 4.02x | |
 | C++ SWO (Ceres) | | | | | |
 | VINS-Fusion (no loop) | | | | | |
 

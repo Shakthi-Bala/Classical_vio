@@ -1,0 +1,38 @@
+
+============================================================
+  EVALUATION REPORT  [Scaramuzza IROS 2018 methodology]
+  Frames: 2862    Path length: 73.04 m
+  Umeyama scale: 1.000000
+============================================================
+
+ATE (Absolute Trajectory Error, Umeyama SE3 aligned):
+  RMSE 3D  : 0.1284 m
+  RMSE X   : 0.0826 m
+  RMSE Y   : 0.0876 m
+  RMSE Z   : 0.0447 m
+
+Rotation RMSE (after Umeyama alignment):
+  Overall  : 1.9771 deg
+  Roll     : 1.6871 deg
+  Pitch    : 0.3866 deg
+  Yaw      : 0.9556 deg
+
+Scale drift RMSE (deviation from 1.0): 0.097116
+
+RPE (Relative Pose Error) [Scaramuzza]:
+    L=  1.0 m :  trans 6.178 ± 4.171 %   rot 0.355 ± 0.203 deg
+    L=  2.0 m :  trans 4.437 ± 2.842 %   rot 0.546 ± 0.281 deg
+    L=  3.7 m :  trans 2.929 ± 1.496 %   rot 0.817 ± 0.369 deg
+    L=  5.0 m :  trans 2.523 ± 1.242 %   rot 0.958 ± 0.405 deg
+    L=  7.3 m :  trans 1.939 ± 0.932 %   rot 1.193 ± 0.477 deg
+    L= 10.0 m :  trans 1.492 ± 0.723 %   rot 1.392 ± 0.587 deg
+    L= 11.0 m :  trans 1.341 ± 0.673 %   rot 1.461 ± 0.622 deg
+    L= 14.6 m :  trans 1.030 ± 0.520 %   rot 1.718 ± 0.687 deg
+    L= 18.3 m :  trans 0.843 ± 0.501 %   rot 1.960 ± 0.829 deg
+    L= 20.0 m :  trans 0.774 ± 0.458 %   rot 2.008 ± 0.810 deg
+    L= 21.9 m :  trans 0.669 ± 0.430 %   rot 2.068 ± 0.732 deg
+    L= 29.2 m :  trans 0.592 ± 0.267 %   rot 2.430 ± 1.072 deg
+    L= 36.5 m :  trans 0.555 ± 0.245 %   rot 2.502 ± 1.287 deg
+    L= 50.0 m :  trans 0.533 ± 0.168 %   rot 2.687 ± 1.965 deg
+
+============================================================
