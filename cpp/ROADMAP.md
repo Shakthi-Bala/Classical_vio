@@ -9,6 +9,11 @@ C++ back end matches Python to 1e-9 m on identical input, front end gives identi
 features on all 2882 frames, ATE 0.1284 m (C++) vs 0.1289 m (Python, same deterministic
 replay), 4.02x vs 1.45x real time, 12.4 vs 34.5 ms per frame. See [README.md](README.md).
 **Phase 2:** Ceres sliding-window backend, ROS 2 node, profiling, VINS-Fusion baseline.
+**Phase 2 status (2026-10-16, sim):** profiling done (12.4 -> 8.6 ms/frame), quirk
+ablation on 11 sequences done (fixed MSCKF mean ATE 0.615 -> 0.249 m), Ceres sliding
+window done (mean 0.164 m on 10 of 11, diverges on V2_03), ROS 2 node done (real-time
+bag = offline result), VINS-Fusion: MH_01 done, other sequences in progress.
+Results: [README.md](README.md).
 **Phase 3 (later):** RealSense live / Jetson / PeAR drone.
 
 ---
@@ -187,9 +192,12 @@ If it won't build, quote published numbers and label them as such in the table.
 | | ATE RMSE [m] | RPE@10m [%/deg] | Latency/frame mean·p95 [ms] | RTF (x86) | RTF (Jetson) |
 |---|---|---|---|---|---|
 | Python MSCKF (deterministic replay) | 0.1289 | 1.49 / 1.41 | 34.5 · 60.2 | 1.45x | n/a |
-| C++ MSCKF | 0.1284 | 1.49 / 1.39 | 12.4 · 16.7 | 4.02x | |
-| C++ SWO (Ceres) | | | | | |
-| VINS-Fusion (no loop) | | | | | |
+| C++ MSCKF (Python behaviour) | 0.1284 | 1.49 / 1.39 | 8.6 · 12.3 | 5.80x | |
+| C++ MSCKF (quirks fixed) | 0.0884 | | 11.3 · 14.6 | 4.41x | |
+| C++ SWO (Ceres) | 0.1013 | | 19.9 · 43.5 | 2.51x | |
+| VINS-Fusion (no loop) | 0.208 (same span) | | ~24 ms solve, 4 cores | | |
+
+MH_01 numbers; all 11 sequences: README "Final comparison".
 
 Add MH_02–MH_05 / V1_xx later. One sequence alone is a weak claim.
 
