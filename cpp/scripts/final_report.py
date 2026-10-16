@@ -2,9 +2,9 @@
 Final comparison on all EuRoC sequences: Python MSCKF, C++ MSCKF (Python
 behaviour), C++ MSCKF with the quirk fixes, C++ sliding window, VINS-Fusion.
 
-Usage (from cpp/):
-  python scripts/final_report.py [--vins PATTERN_WITH_{seq}]
-Writes results/final/ate_per_sequence.png and results/final/summary.md.
+Usage (from cpp/): python scripts/final_report.py [--vins PATTERN_WITH_{seq}]
+Writes, in results/final/: ate_table.csv, rpe_table.csv, summary.md (both
+tables), ate_per_sequence.png and traj_<SEQ>.png (--traj-seq).
 """
 import argparse
 import csv
@@ -15,200 +15,156 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-import sys
+import plotstyle as ps
+import vio_eval as ve
 
-import ablation_table as at
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'Code'))
-
-TEXT, GRID, SPINE = '#52514e', '#e6e5e1', '#d4d3cf'
-# (column, label, color, marker): validated categorical slots 1-4; marker
-# shapes are the secondary encoding the low-contrast slots need.
+OUT = 'results/final'
+COLUMNS = ['Python', 'MSCKF = Python', 'MSCKF fixed', 'SWO', 'VINS-Fusion']
+# Plotted series: (column, label, colour, marker). Marker shapes are the
+# secondary encoding the two low-contrast palette slots need.
 SERIES = [
-    ('Python', 'Python MSCKF', '#2a78d6', 'o'),
-    ('MSCKF fixed', 'C++ MSCKF (quirks fixed)', '#eb6834', 's'),
-    ('SWO', 'C++ sliding window (Ceres)', '#1baf7a', 'D'),
-    ('VINS-Fusion', 'VINS-Fusion (no loop)', '#eda100', '^'),
+    ('Python', 'Python MSCKF', ps.PYTHON, 'o'),
+    ('MSCKF fixed', 'C++ MSCKF (quirks fixed)', ps.CPP_MSCKF, 's'),
+    ('SWO', 'C++ sliding window (Ceres)', ps.CPP_SWO, 'D'),
+    ('VINS-Fusion', 'VINS-Fusion (no loop)', ps.VINS, '^'),
 ]
-DIVERGED = at.DIVERGED_M
 
 
-RPE_LENGTH = 10.0   # [m] segment length for the relative pose error
+def trajectory_paths(seq, vins_pattern):
+    return {
+        'Python': ve.python_trajectory(seq),
+        'MSCKF = Python': f'results/ablation/{seq}/baseline/traj_cpp.txt',
+        'MSCKF fixed': f'results/backends/msckf/{seq}/traj_cpp.txt',
+        'SWO': f'results/backends/swo/{seq}/traj_cpp.txt',
+        'VINS-Fusion': vins_pattern.format(seq=seq),
+    }
 
 
-def rpe(gt, traj_path, t_min=None, length=RPE_LENGTH):
-    """Mean RPE over all segments of `length` metres (Code/evaluate.py's
-    compute_rpe, Scaramuzza): (translation [%], rotation [deg]) or None."""
-    from evaluate import compute_rpe, interpolate_gt
-    from scipy.spatial.transform import Rotation
-    if not os.path.exists(traj_path):
-        return None
-    d = np.atleast_2d(np.loadtxt(traj_path))
-    if t_min is not None:
-        d = d[d[:, 0] >= t_min]
-    gt_t, gt_p, gt_q = gt
-    d = d[(d[:, 0] >= gt_t[0]) & (d[:, 0] <= gt_t[-1])]
-    if len(d) < 10:
-        return None
-    gt_pos, gt_rot = interpolate_gt(gt_t, gt_p, gt_q, d[:, 0])
-    est_rot = Rotation.from_quat(d[:, 4:8]).as_matrix()
-    out = compute_rpe(gt_pos, gt_rot, d[:, 1:4], est_rot, [length])[length]
-    if len(out['trans']) == 0:
-        return None
-    return float(np.mean(out['trans'])), float(np.mean(out['rot']))
+def score(vins_pattern):
+    """{seq: {column: (ate, rpe)}}. VINS-Fusion ran on the whole bag, so it is
+    cropped to the same start time as our runs."""
+    table = {}
+    for s in ve.sequences():
+        gt = ve.load_gt(s['path'])
+        row = {}
+        for col, path in trajectory_paths(s['sequence'], vins_pattern).items():
+            t_min = s['t_min'] if col == 'VINS-Fusion' else None
+            a = None if path is None else ve.ate(gt, path, t_min)
+            r = None if ve.failed(a) else ve.rpe(gt, path, t_min)
+            row[col] = (a, r)
+        table[s['sequence']] = row
+    return table
 
 
-def plot_trajectory(seq, path, out):
-    """Top view of one sequence: ground truth and each run, SE3-aligned."""
-    from evaluate import interpolate_gt, umeyama_alignment
-    gt_t, gt_p, gt_q = at.load_gt(path)
-    runs = [('MSCKF fixed', f'results/backends/msckf/{seq}/traj_cpp.txt', '#eb6834'),
-            ('SWO', f'results/backends/swo/{seq}/traj_cpp.txt', '#1baf7a')]
+def common_sequences(table):
+    """Sequences every column completed: the fair set for means."""
+    return [seq for seq, row in table.items() if not any(ve.failed(row[c][0]) for c in COLUMNS)]
+
+
+def write_tables(table):
+    common = common_sequences(table)
+    with open(f'{OUT}/ate_table.csv', 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['sequence'] + COLUMNS)
+        for seq, row in table.items():
+            w.writerow([seq] + ['' if ve.failed(row[c][0]) else f'{row[c][0]:.4f}' for c in COLUMNS])
+    with open(f'{OUT}/rpe_table.csv', 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['sequence'] + [f'{c} trans%' for c in COLUMNS] + [f'{c} rot_deg' for c in COLUMNS])
+        for seq, row in table.items():
+            rp = [row[c][1] for c in COLUMNS]
+            w.writerow([seq] + ['' if v is None else f'{v[0]:.3f}' for v in rp] +
+                       ['' if v is None else f'{v[1]:.3f}' for v in rp])
+
+    def ate_cell(a):
+        return 'fail' if a is None else ('div.' if a > ve.DIVERGED_M else f'{a:.3f}')
+
+    head = '|---' * (len(COLUMNS) + 1) + '|'
+    lines = ['| ATE RMSE [m] | ' + ' | '.join(COLUMNS) + ' |', head]
+    for seq, row in table.items():
+        lines.append(f'| {seq} | ' + ' | '.join(ate_cell(row[c][0]) for c in COLUMNS) + ' |')
+    lines.append('| failures | ' + ' | '.join(
+        str(sum(ve.failed(row[c][0]) for row in table.values())) for c in COLUMNS) + ' |')
+    lines.append(f'| mean, {len(common)} seq. all completed | ' + ' | '.join(
+        f'{np.mean([table[s][c][0] for s in common]):.3f}' for c in COLUMNS) + ' |')
+
+    lines += ['', f'| RPE @ {ve.RPE_LENGTH_M:.0f} m [% / deg] | ' + ' | '.join(COLUMNS) + ' |', head]
+    for seq, row in table.items():
+        lines.append(f'| {seq} | ' + ' | '.join(
+            'fail' if row[c][1] is None else f'{row[c][1][0]:.2f} / {row[c][1][1]:.2f}'
+            for c in COLUMNS) + ' |')
+    lines.append(f'| mean, {len(common)} seq. all completed | ' + ' | '.join(
+        f'{np.mean([table[s][c][1][0] for s in common]):.2f} / '
+        f'{np.mean([table[s][c][1][1] for s in common]):.2f}' for c in COLUMNS) + ' |')
+    with open(f'{OUT}/summary.md', 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    return lines
+
+
+def plot_ate_per_sequence(table):
+    seqs = list(table)
+    x = np.arange(len(seqs))
+    top = 3.0   # failures are drawn at this height
+    fig, ax = plt.subplots(figsize=(9.5, 4.6), dpi=150)
+    for (col, label, color, marker), dx in zip(SERIES, np.linspace(-0.27, 0.27, len(SERIES))):
+        ates = [table[s][col][0] for s in seqs]
+        ok = [i for i, a in enumerate(ates) if not ve.failed(a)]
+        bad = [i for i, a in enumerate(ates) if ve.failed(a)]
+        ax.scatter(x[ok] + dx, [ates[i] for i in ok], s=36, color=color, marker=marker,
+                   edgecolor=ps.SURFACE, linewidth=0.8, zorder=3, label=label)
+        ax.scatter(x[bad] + dx, [top] * len(bad), s=36, color=color, marker='x', zorder=3)
+    ax.axhline(top * 0.85, color=ps.SPINE, lw=0.8)
+    ax.annotate('failed / diverged', (len(seqs) - 0.5, top), ha='right', va='bottom', fontsize=7,
+                color=ps.TEXT, xytext=(0, 3), textcoords='offset points')
+    ax.set_yscale('log')
+    ax.set_ylim(0.05, top * 1.4)
+    ax.set_yticks([0.05, 0.1, 0.2, 0.5, 1, 2], ['0.05', '0.1', '0.2', '0.5', '1', '2'])
+    ax.set_xticks(x, [s.replace('_', '\n', 1) for s in seqs], fontsize=7)
+    ax.set_ylabel('ATE RMSE [m]  (Umeyama SE3)', color=ps.TEXT)
+    ax.set_title('EuRoC: Python vs C++ MSCKF vs C++ sliding window vs VINS-Fusion',
+                 color=ps.TITLE, fontsize=10)
+    ps.style_axes(ax, grid='y')
+    ax.tick_params(labelsize=7)
+    ax.legend(frameon=False, labelcolor=ps.TEXT, fontsize=7, ncol=4, loc='upper left')
+    fig.tight_layout()
+    fig.savefig(f'{OUT}/ate_per_sequence.png', facecolor=ps.SURFACE)
+
+
+def plot_trajectory(seq, seq_path):
+    """Top view: ground truth, fixed MSCKF and sliding window, SE3-aligned."""
+    gt = ve.load_gt(seq_path)
     labels = {c: l for c, l, _, _ in SERIES}
     fig, ax = plt.subplots(figsize=(6.5, 5.5), dpi=150)
-    t0 = None
-    for name, traj, color in runs:
-        d = np.loadtxt(traj)
-        d = d[(d[:, 0] >= gt_t[0]) & (d[:, 0] <= gt_t[-1])]
-        g, _ = interpolate_gt(gt_t, gt_p, gt_q, d[:, 0])
-        R, t, _ = umeyama_alignment(d[:, 1:4], g)
-        pa = (R @ d[:, 1:4].T).T + t
-        if t0 is None:
-            t0 = d[0, 0]
-            ax.plot(g[:, 0], g[:, 1], color='#8a8984', lw=2, ls='--', label='ground truth')
-        ate = np.sqrt(np.mean(np.sum((pa - g) ** 2, axis=1)))
-        ax.plot(pa[:, 0], pa[:, 1], color=color, lw=1.6, label=f'{labels[name]}  (ATE {ate:.2f} m)')
+    for i, (col, color) in enumerate([('MSCKF fixed', ps.CPP_MSCKF), ('SWO', ps.CPP_SWO)]):
+        traj = ve.load_tum(trajectory_paths(seq, '')[col], gt)
+        p, g = ve.align(traj, gt)
+        if i == 0:
+            ax.plot(g[:, 0], g[:, 1], color=ps.NEUTRAL, lw=2, ls='--', label='ground truth')
+        ate = np.sqrt(np.mean(np.sum((p - g) ** 2, axis=1)))
+        ax.plot(p[:, 0], p[:, 1], color=color, lw=1.6, label=f'{labels[col]}  (ATE {ate:.2f} m)')
     ax.set_aspect('equal')
-    ax.set_xlabel('x [m]', color=TEXT)
-    ax.set_ylabel('y [m]', color=TEXT)
-    ax.set_title(f'{seq}: filter vs sliding window (same front end)', color='#0b0b0b', fontsize=10)
-    ax.grid(color=GRID, lw=0.6)
-    for sp in ax.spines.values():
-        sp.set_color(SPINE)
-    ax.tick_params(colors=TEXT, labelsize=8)
-    ax.legend(frameon=False, labelcolor=TEXT, fontsize=8)
+    ax.set_xlabel('x [m]', color=ps.TEXT)
+    ax.set_ylabel('y [m]', color=ps.TEXT)
+    ax.set_title(f'{seq}: filter vs sliding window (same front end)', color=ps.TITLE, fontsize=10)
+    ps.style_axes(ax)
+    ax.tick_params(labelsize=8)
+    ax.legend(frameon=False, labelcolor=ps.TEXT, fontsize=8)
     fig.tight_layout()
-    fig.savefig(out, facecolor='#fcfcfb')
+    fig.savefig(f'{OUT}/traj_{seq}.png', facecolor=ps.SURFACE)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--vins', default='results/vins/vins_{seq}_tum.txt')
+    parser.add_argument('--traj-seq', default='MH_05_difficult')
     args = parser.parse_args()
+    os.makedirs(OUT, exist_ok=True)
 
-    rows, rpe_rows = [], []
-    with open('config/euroc_offsets.csv') as f:
-        sequences = list(csv.DictReader(f))
-    for s in sequences:
-        seq, path, offset = s['sequence'], s['path'], float(s['offset_s'])
-        gt = at.load_gt(path)
-        with open(os.path.join(path, 'mav0/imu0/data.csv')) as imu_file:
-            next(imu_file)
-            t_min = float(next(imu_file).split(',')[0]) * 1e-9 + offset
-        py_dir = 'results/python' if seq == 'MH_01_easy' else f'results/sequences/{seq}/python'
-        log = f'{py_dir}/run.log' if seq == 'MH_01_easy' else f'results/sequences/{seq}/python.log'
-        crashed = os.path.exists(log) and 'Traceback' in open(log).read()
-        vins_path = args.vins.format(seq=seq)
-        if seq == 'MH_01_easy' and not os.path.exists(vins_path):
-            vins_path = 'results/vins/vins_MH_01_easy_tum.txt'
-        paths = {
-            'Python': None if crashed else f'{py_dir}/traj_python.txt',
-            'MSCKF = Python': f'results/ablation/{seq}/baseline/traj_cpp.txt',
-            'MSCKF fixed': f'results/backends/msckf/{seq}/traj_cpp.txt',
-            'SWO': f'results/backends/swo/{seq}/traj_cpp.txt',
-            'VINS-Fusion': vins_path,
-        }
-        rpe_row = {'sequence': seq}
-        for col, tp in paths.items():
-            rpe_row[col] = None if tp is None else rpe(gt, tp, t_min if col == 'VINS-Fusion' else None)
-        rpe_rows.append(rpe_row)
-        rows.append({
-            'sequence': seq,
-            'Python': None if crashed else at.ate(gt, f'{py_dir}/traj_python.txt'),
-            'MSCKF = Python': at.ate(gt, f'results/ablation/{seq}/baseline/traj_cpp.txt'),
-            'MSCKF fixed': at.ate(gt, f'results/backends/msckf/{seq}/traj_cpp.txt'),
-            'SWO': at.ate(gt, f'results/backends/swo/{seq}/traj_cpp.txt'),
-            # VINS runs the whole bag; score it on the same span as ours.
-            'VINS-Fusion': at.ate(gt, vins_path, t_min=t_min),
-        })
-
-    # --- figure: ATE per sequence, log scale, failures on top.
-    seqs = [r['sequence'] for r in rows]
-    x = np.arange(len(seqs))
-    fig, ax = plt.subplots(figsize=(9.5, 4.6), dpi=150)
-    offsets = np.linspace(-0.27, 0.27, len(SERIES))
-    top = 3.0
-    for (col, label, color, marker), dx in zip(SERIES, offsets):
-        ys = [r[col] for r in rows]
-        ok = [i for i, y in enumerate(ys) if y is not None and y <= DIVERGED]
-        bad = [i for i, y in enumerate(ys) if y is None or y > DIVERGED]
-        if not ok and not bad:
-            continue
-        ax.scatter(x[ok] + dx, [ys[i] for i in ok], s=36, color=color, marker=marker,
-                   edgecolor='#fcfcfb', linewidth=0.8, zorder=3, label=label)
-        ax.scatter(x[bad] + dx, [top] * len(bad), s=36, color=color, marker='x', zorder=3)
-    ax.axhline(top * 0.85, color=SPINE, lw=0.8)
-    ax.annotate('failed / diverged', (len(seqs) - 0.5, top), ha='right', va='bottom', fontsize=7,
-                color=TEXT, xytext=(0, 3), textcoords='offset points')
-    ax.set_yscale('log')
-    ax.set_ylim(0.05, top * 1.4)
-    ax.set_yticks([0.05, 0.1, 0.2, 0.5, 1, 2], ['0.05', '0.1', '0.2', '0.5', '1', '2'])
-    ax.set_xticks(x, [s.replace('_', '\n', 1) for s in seqs], fontsize=7)
-    ax.set_ylabel('ATE RMSE [m]  (Umeyama SE3)', color=TEXT)
-    ax.set_title('EuRoC: Python vs C++ MSCKF vs C++ sliding window vs VINS-Fusion',
-                 color='#0b0b0b', fontsize=10)
-    ax.grid(axis='y', color=GRID, lw=0.6)
-    ax.set_axisbelow(True)
-    for s in ax.spines.values():
-        s.set_color(SPINE)
-    ax.tick_params(colors=TEXT, labelsize=7)
-    ax.legend(frameon=False, labelcolor=TEXT, fontsize=7, ncol=4, loc='upper left')
-    fig.tight_layout()
-    os.makedirs('results/final', exist_ok=True)
-    fig.savefig('results/final/ate_per_sequence.png', facecolor='#fcfcfb')
-
-    # --- markdown table
-    cols = ['Python', 'MSCKF = Python', 'MSCKF fixed', 'SWO', 'VINS-Fusion']
-
-    def fmt(v):
-        return 'fail' if v is None else ('div.' if v > DIVERGED else f'{v:.3f}')
-
-    lines = ['| ATE RMSE [m] | ' + ' | '.join(cols) + ' |', '|---' * (len(cols) + 1) + '|']
-    for r in rows:
-        lines.append(f"| {r['sequence']} | " + ' | '.join(fmt(r[c]) for c in cols) + ' |')
-    good = lambda r, c: r[c] is not None and r[c] <= DIVERGED
-    lines.append('| failures | ' + ' | '.join(str(sum(not good(r, c) for r in rows)) for c in cols) + ' |')
-    # Mean over the sequences every column completed (a fair comparison).
-    common = [r for r in rows if all(good(r, c) for c in cols)]
-    if common:
-        lines.append(f'| mean, {len(common)} seq. all completed | ' +
-                     ' | '.join(f"{np.mean([r[c] for r in common]):.3f}" for c in cols) + ' |')
-    # RPE table: translation [%] / rotation [deg] over 10 m segments; diverged
-    # runs (ATE above the threshold) are reported as failures.
-    lines += ['', f'| RPE @ {RPE_LENGTH:.0f} m [% / deg] | ' + ' | '.join(cols) + ' |',
-              '|---' * (len(cols) + 1) + '|']
-    for r, a in zip(rpe_rows, rows):
-        cells = []
-        for c in cols:
-            v = r[c]
-            cells.append('fail' if v is None or not good(a, c) else f'{v[0]:.2f} / {v[1]:.2f}')
-        lines.append(f"| {r['sequence']} | " + ' | '.join(cells) + ' |')
-    common_idx = [i for i, a in enumerate(rows) if all(good(a, c) for c in cols)]
-    if common_idx:
-        lines.append(f'| mean, {len(common_idx)} seq. all completed | ' + ' | '.join(
-            f"{np.mean([rpe_rows[i][c][0] for i in common_idx]):.2f} / "
-            f"{np.mean([rpe_rows[i][c][1] for i in common_idx]):.2f}" for c in cols) + ' |')
-    open('results/final/summary.md', 'w').write('\n'.join(lines) + '\n')
-    with open('results/final/rpe_table.csv', 'w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['sequence'] + [f'{c} trans%' for c in cols] + [f'{c} rot_deg' for c in cols])
-        for r, a in zip(rpe_rows, rows):
-            w.writerow([r['sequence']] +
-                       [f'{r[c][0]:.3f}' if r[c] and good(a, c) else '' for c in cols] +
-                       [f'{r[c][1]:.3f}' if r[c] and good(a, c) else '' for c in cols])
-    mh05 = next(s for s in sequences if s['sequence'] == 'MH_05_difficult')
-    plot_trajectory('MH_05_difficult', mh05['path'], 'results/final/traj_MH_05_difficult.png')
-    print('\n'.join(lines))
+    table = score(args.vins)
+    print('\n'.join(write_tables(table)))
+    plot_ate_per_sequence(table)
+    seq_path = next(s['path'] for s in ve.sequences() if s['sequence'] == args.traj_seq)
+    plot_trajectory(args.traj_seq, seq_path)
 
 
 if __name__ == '__main__':

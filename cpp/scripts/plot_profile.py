@@ -13,9 +13,11 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-BEFORE_COLOR = '#8a8984'   # neutral: the reference
-AFTER_COLOR = '#eb6834'    # C++ series color used in the other plots
-TEXT = '#52514e'
+import plotstyle as ps
+
+BEFORE_COLOR = ps.NEUTRAL    # the reference
+AFTER_COLOR = ps.CPP_MSCKF
+TEXT = ps.TEXT
 
 # Leaf stages that together make up a frame (inclusive parents left out).
 STAGES = [
@@ -57,15 +59,11 @@ def main():
     ax.invert_yaxis()
     ax.set_xlabel('ms per frame (inclusive)', color=TEXT)
     ax.set_title('C++ MSCKF: where the time goes, before vs after optimization',
-                 color='#0b0b0b')
-    ax.grid(axis='x', color='#e6e5e1', lw=0.6)
-    ax.set_axisbelow(True)
-    for s in ax.spines.values():
-        s.set_color('#d4d3cf')
-    ax.tick_params(colors=TEXT)
+                 color=ps.TITLE)
+    ps.style_axes(ax, grid='x')
     ax.legend(frameon=False, labelcolor=TEXT, loc='lower right')
     fig.tight_layout()
-    fig.savefig(out, facecolor='#fcfcfb')
+    fig.savefig(out, facecolor=ps.SURFACE)
     print('wrote', out)
 
 

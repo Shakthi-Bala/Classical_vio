@@ -54,6 +54,8 @@ def parse_maps(text):
 
 def symbolize(addrs_by_file):
     addr2line = shutil.which('addr2line') or shutil.which('x86_64-conda-linux-gnu-addr2line')
+    if addr2line is None:
+        sys.exit('addr2line not found (binutils); activate the vio_cpp env')
     names = {}
     for path, addrs in addrs_by_file.items():
         addrs = sorted(addrs)

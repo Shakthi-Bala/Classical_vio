@@ -1,6 +1,7 @@
 """
 End-to-end latency of VINS-Fusion from a bag recorded during a real-time run
-(/vins_estimator/odometry + /imu0, see ros2 run scripts): for each pose,
+(/vins_estimator/odometry + /imu0, recorded with `ros2 bag record` next to
+the VINS node during bag playback): for each pose,
   latency = receive time of the odometry - receive time of the IMU sample with
             the same timestamp (= when that frame's data was played).
 This matches what vio_node logs as end-to-end latency (data in -> pose out).
@@ -9,9 +10,9 @@ Usage (ros2_vio env, which has `rosbags`):
   python scripts/vins_latency.py /scratch/.../latency_MH_01_easy/latency_bag results/vins/latency_MH_01_easy.csv
 """
 import sys
+from pathlib import Path
 
 import numpy as np
-from pathlib import Path
 
 from rosbags.highlevel import AnyReader
 from rosbags.typesys import Stores, get_typestore

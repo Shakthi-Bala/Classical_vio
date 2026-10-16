@@ -1,28 +1,32 @@
 #!/usr/bin/env bash
-# Quirk ablation: run the C++ MSCKF with each Python-quirk fix on its own, all
-# fixes together, and none (= Python behaviour), in parallel.
+# Quirk ablation on one sequence: the C++ MSCKF with no fix (= Python
+# behaviour), each Python-quirk fix on its own, all fixes, and all but the
+# chi-squared gate, in parallel (one core each).
 #
-#   scripts/run_ablation.sh /path/to/SEQ OFFSET_SECONDS results/ablation/SEQ
+#   scripts/run_ablation.sh /path/to/SEQ OFFSET_SECONDS results/ablation/SEQ [BUILD_DIR]
 #
-# Run from cpp/ on a compute node with >= 9 cores, e.g.
-#   srun -p quick -c 10 --mem=16G -t 01:00:00 scripts/run_ablation.sh ...
+# Run from cpp/ on a node with >= 10 cores. Variant names match VARIANTS in
+# scripts/ablation_table.py.
 set -euo pipefail
-
-DATA=$1
-OFFSET=$2
-OUT=$3
+[[ $# -ge 3 ]] || { echo "usage: $0 SEQ_DIR OFFSET OUT_DIR [BUILD_DIR]" >&2; exit 2; }
+DATA=$1; OFFSET=$2; OUT=$3; BUILD=${4:-build}
 FIXES=(epipolar_full_dot lm_upstream_loops chi2_95 oc_upstream normalize_quaternion
        mask_clamp full_precision_publish all)
-
 mkdir -p "$OUT"
-echo "$DATA" > "$OUT/data_path.txt"
-echo "$OFFSET" > "$OUT/offset.txt"
 
-build/main_euroc --path "$DATA" --offset "$OFFSET" --threads 1 --out "$OUT/baseline" \
-    > "$OUT/baseline.log" 2>&1 &
+run() {   # run NAME [--fix F]...
+  local name=$1; shift
+  "$BUILD/main_euroc" --path "$DATA" --offset "$OFFSET" --threads 1 "$@" \
+      --out "$OUT/$name" > "$OUT/$name.log" 2>&1 &
+}
+run baseline
 for fix in "${FIXES[@]}"; do
-  build/main_euroc --path "$DATA" --offset "$OFFSET" --threads 1 --fix "$fix" \
-      --out "$OUT/$fix" > "$OUT/$fix.log" 2>&1 &
+  run "$fix" --fix "$fix"
 done
+all_but_chi2=()
+for fix in "${FIXES[@]}"; do
+  [[ $fix == chi2_95 || $fix == all ]] || all_but_chi2+=(--fix "$fix")
+done
+run all_but_chi2 "${all_but_chi2[@]}"
 wait
 echo "done: $OUT"

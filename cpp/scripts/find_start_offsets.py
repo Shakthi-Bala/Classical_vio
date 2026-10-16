@@ -14,6 +14,12 @@ import sys
 import numpy as np
 
 KEEP = {'MH_01_easy': 40.0}   # offsets fixed by earlier runs
+WINDOW = 200                   # IMU samples = 1 s at 200 Hz (the filters' static init)
+STEP = 20                      # candidate windows every 0.1 s
+# A window's score: accelerometer and gyro standard deviation, each relative to
+# a typical value on the ground with motors running (so both count about equally).
+ACC_STD_SCALE = 0.1            # [m/s^2]
+GYRO_STD_SCALE = 0.02          # [rad/s]
 
 
 def start_offset(seq_dir, lookback=12.0):
@@ -26,13 +32,15 @@ def start_offset(seq_dir, lookback=12.0):
     moved = t_gt[np.argmax(np.linalg.norm(gt[:, 1:4] - gt[0, 1:4], axis=1) > 1.0)]
 
     best = None
-    for i in range(0, len(t) - 200, 20):   # 0.1 s steps
+    for i in range(0, len(t) - WINDOW, STEP):
         if t[i] < max(moved - lookback, t_gt[0] + 0.5) or t[i] + 1.0 > moved - 0.5:
             continue
-        score = (np.linalg.norm(acc[i:i + 200].std(0)) / 0.1 +
-                 np.linalg.norm(gyro[i:i + 200].std(0)) / 0.02)
+        score = (np.linalg.norm(acc[i:i + WINDOW].std(0)) / ACC_STD_SCALE +
+                 np.linalg.norm(gyro[i:i + WINDOW].std(0)) / GYRO_STD_SCALE)
         if best is None or score < best[0]:
             best = (score, t[i] - t[0])
+    if best is None:
+        raise ValueError(f'{seq_dir}: no 1 s IMU window in the {lookback} s before take-off')
     return round(best[1], 1)
 
 
@@ -40,4 +48,5 @@ if __name__ == '__main__':
     print('sequence,offset_s,path')
     for seq_dir in sys.argv[1:]:
         name = os.path.basename(os.path.normpath(seq_dir))
-        print(f'{name},{KEEP.get(name, start_offset(seq_dir))},{os.path.abspath(seq_dir)}')
+        offset = KEEP[name] if name in KEEP else start_offset(seq_dir)
+        print(f'{name},{offset},{os.path.abspath(seq_dir)}')

@@ -1,142 +1,91 @@
 """
-Compare the Python and C++ MSCKF runs: accuracy, speed and front-end parity.
-
-Accuracy uses the existing Code/evaluate.py (Umeyama SE3 ATE, Scaramuzza RPE),
-unchanged, so both implementations are scored by exactly the same code.
+Phase 1 report: the Python and C++ MSCKF on EuRoC MH_01_easy, run with the
+same deterministic replay. Accuracy (ATE, RPE), per-frame latency, and the two
+parity checks (front-end features, back end on a replayed feature file).
 
 Usage (from cpp/, in the `cv` env, after run_python_reference.py and main_euroc):
-  python scripts/compare.py --gt /path/to/MH_01_easy/mav0/state_groundtruth_estimate0/data.csv
+  python scripts/compare.py --seq /path/to/MH_01_easy
 
-Writes results/summary.md, results/trajectory_xy.png, results/latency.png and
-results/<run>/plots/ (all of evaluate.py's plots per run).
+Writes results/summary.md, results/trajectory_xy.png, results/latency.png and,
+per run, results/<run>/plots/ (Code/evaluate.py's full plot set).
 """
 import argparse
 import contextlib
 import io
 import os
-import re
-import sys
 
-import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.spatial.transform import Rotation
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'Code'))
-from evaluate import generate_all_plots, umeyama_alignment
+import plotstyle as ps
+import vio_eval as ve
+from evaluate import generate_all_plots
 
-# Validated categorical slots 1-2 (dataviz palette); ground truth is a neutral reference.
-COLORS = {'Python': '#2a78d6', 'C++': '#eb6834'}
-GT_COLOR = '#8a8984'
-TEXT = '#52514e'
-
-RUNS = [   # (label, trajectory, timing csv, plots dir)
-    ('Python', 'results/python/traj_python.txt', 'results/python/timing_python.csv',
-     'results/python/plots'),
-    ('C++', 'results/cpp/traj_cpp.txt', 'results/cpp/timing_cpp.csv', 'results/cpp/plots'),
-]
-
-
-def load_gt(path):
-    d = np.loadtxt(path, delimiter=',', comments='#')
-    return d[:, 0] * 1e-9, d[:, 1:4], d[:, 4:8]   # t [s], p, q (w x y z)
-
-
-def load_tum(path):
-    d = np.loadtxt(path)
-    return d[:, 0], d[:, 1:4], Rotation.from_quat(d[:, 4:8]).as_matrix()
-
-
-def evaluate(gt, traj_path, out_dir):
-    t, p, R = load_tum(traj_path)
-    with contextlib.redirect_stdout(io.StringIO()):
-        generate_all_plots(gt[0], gt[1], gt[2], t, p, R, output_dir=out_dir)
-    report = open(os.path.join(out_dir, 'rmse_report.txt')).read()
-
-    def grab(pattern):
-        m = re.search(pattern, report)
-        return float(m.group(1)) if m else float('nan')
-
-    return {
-        'ate': grab(r'RMSE 3D\s*:\s*([\d.]+)'),
-        'rot': grab(r'Overall\s*:\s*([\d.]+)'),
-        'rpe10_t': grab(r'L= 10\.0 m :\s*trans ([\d.]+)'),
-        'rpe10_r': grab(r'L= 10\.0 m :.*rot ([\d.]+)'),
-        'poses': len(t),
-        'traj': (t, p),
-    }
+RUNS = {   # label: (trajectory, timing csv, plots dir, colour)
+    'Python': ('results/python/traj_python.txt', 'results/python/timing_python.csv',
+               'results/python/plots', ps.PYTHON),
+    'C++': ('results/cpp/traj_cpp.txt', 'results/cpp/timing_cpp.csv', 'results/cpp/plots',
+            ps.CPP_MSCKF),
+}
+FEATURE_TOLERANCE = 1e-6   # normalized coordinates
 
 
 def timing_stats(path):
     d = np.genfromtxt(path, delimiter=',', names=True)
-    fe, be = d['frontend_ms'], d['backend_ms']
-    total = fe + be
-    data_s = d['timestamp'][-1] - d['timestamp'][0]
-    stats = {}
-    for name, x in (('frontend', fe), ('backend', be), ('total', total)):
-        stats[name] = (x.mean(), np.percentile(x, 50), np.percentile(x, 95), x.max())
-    stats['rtf'] = data_s / (total.sum() / 1e3)
+    total = d['frontend_ms'] + d['backend_ms']
+    stats = {name: (x.mean(), np.percentile(x, 95))
+             for name, x in (('frontend', d['frontend_ms']), ('backend', d['backend_ms']),
+                             ('total', total))}
+    stats['rtf'] = (d['timestamp'][-1] - d['timestamp'][0]) / (total.sum() / 1e3)
     return stats
 
 
-def read_features(path, max_frames):
-    frames = []
-    with open(path) as f:
-        for line in f:
-            if line.startswith('F'):
-                if len(frames) == max_frames:
-                    break
-                frames.append({})
-            else:
-                p = line.split()
-                frames[-1][int(p[0])] = np.array(p[1:], dtype=float)
-    return frames
-
-
-def frontend_parity(py_path, cpp_path, max_frames=3000):
-    a, b = read_features(py_path, max_frames), read_features(cpp_path, max_frames)
+def frontend_parity(py_path, cpp_path):
+    """Number of leading frames whose features agree (same ids, coordinates
+    within FEATURE_TOLERANCE), the frame count, and mean features per frame."""
+    a, b = ve.read_features(py_path), ve.read_features(cpp_path)
     n = min(len(a), len(b))
     identical = 0
-    for k in range(n):
-        same = (a[k].keys() == b[k].keys() and
-                all(np.abs(a[k][i] - b[k][i]).max() < 1e-6 for i in a[k]))
-        if not same:
+    for (_, fa), (_, fb) in zip(a[:n], b[:n]):
+        if fa.keys() != fb.keys() or any(np.abs(fa[i] - fb[i]).max() >= FEATURE_TOLERANCE
+                                         for i in fa):
             break
         identical += 1
-    return {
-        'frames': n,
-        'identical_prefix': identical,
-        'mean_count_py': np.mean([len(x) for x in a[:n]]),
-        'mean_count_cpp': np.mean([len(x) for x in b[:n]]),
-    }
+    return identical, n, np.mean([len(f) for _, f in a[:n]]), np.mean([len(f) for _, f in b[:n]])
 
 
-def plot_trajectories(gt, results, out_path):
+def backend_parity():
+    """Max position difference when both filters replay the same feature file."""
+    a = ve.load_tum('results/python_replay/traj_python.txt')
+    b = ve.load_tum('results/cpp_replay/traj_cpp.txt')
+    if a is None or b is None or len(a) != len(b):
+        print('back-end parity: replay trajectories missing or of different length, skipped')
+        return None
+    return len(a), np.linalg.norm(a[:, 1:4] - b[:, 1:4], axis=1).max()
+
+
+def plot_trajectories(gt, out_path):
     fig, ax = plt.subplots(figsize=(7, 6), dpi=150)
-    t_ref, p_ref = results['Python']['traj']
-    gt_xy = gt[1][(gt[0] >= t_ref[0]) & (gt[0] <= t_ref[-1])]
-    ax.plot(gt_xy[:, 0], gt_xy[:, 1], color=GT_COLOR, lw=2, ls='--', label='Ground truth')
-    for name in ('Python', 'C++'):
-        t, p = results[name]['traj']
-        # Align to ground truth (SE3 Umeyama), the same way the ATE is computed.
-        gt_at = np.stack([np.interp(t, gt[0], gt[1][:, i]) for i in range(3)], axis=1)
-        R, tr, s = umeyama_alignment(p, gt_at)
-        pa = (s * R @ p.T).T + tr
+    for i, (name, (traj_path, _, _, color)) in enumerate(RUNS.items()):
+        traj = ve.load_tum(traj_path, gt)
+        p, g = ve.align(traj, gt)
+        if i == 0:
+            ax.plot(g[:, 0], g[:, 1], color=ps.NEUTRAL, lw=2, ls='--', label='Ground truth')
+        ate = np.sqrt(np.mean(np.sum((p - g) ** 2, axis=1)))
         # Python drawn wide underneath, C++ thin on top: the two nearly coincide.
-        ax.plot(pa[:, 0], pa[:, 1], color=COLORS[name], lw=4.5 if name == 'Python' else 1.5,
-                label=f"{name}  (ATE {results[name]['ate']:.3f} m)")
-    ax.set_xlabel('x [m]', color=TEXT)
-    ax.set_ylabel('y [m]', color=TEXT)
-    ax.set_title('EuRoC MH_01_easy: stereo MSCKF, Python vs C++', color='#0b0b0b')
+        ax.plot(p[:, 0], p[:, 1], color=color, lw=4.5 if name == 'Python' else 1.5,
+                label=f'{name}  (ATE {ate:.3f} m)')
+    ax.set_xlabel('x [m]', color=ps.TEXT)
+    ax.set_ylabel('y [m]', color=ps.TEXT)
+    ax.set_title('EuRoC MH_01_easy: stereo MSCKF, Python vs C++', color=ps.TITLE)
     ax.set_aspect('equal')
-    ax.grid(color='#e6e5e1', lw=0.6)
-    for s in ax.spines.values():
-        s.set_color('#d4d3cf')
-    ax.tick_params(colors=TEXT)
-    ax.legend(frameon=False, labelcolor=TEXT)
+    ps.style_axes(ax)
+    ax.legend(frameon=False, labelcolor=ps.TEXT)
     fig.tight_layout()
-    fig.savefig(out_path, facecolor='#fcfcfb')
+    fig.savefig(out_path, facecolor=ps.SURFACE)
     plt.close(fig)
 
 
@@ -145,88 +94,76 @@ def plot_latency(timings, out_path):
     x = np.arange(len(stages))
     width = 0.36
     fig, ax = plt.subplots(figsize=(7, 4), dpi=150)
-    for j, name in enumerate(('Python', 'C++')):
+    for j, (name, (_, _, _, color)) in enumerate(RUNS.items()):
         means = [timings[name][s][0] for s in stages]
-        bars = ax.bar(x + (j - 0.5) * (width + 0.02), means, width, color=COLORS[name],
+        bars = ax.bar(x + (j - 0.5) * (width + 0.02), means, width, color=color,
                       label=f"{name}  ({timings[name]['rtf']:.2f}x real time)")
-        for b, v in zip(bars, means):
-            ax.annotate(f'{v:.1f}', (b.get_x() + b.get_width() / 2, v), ha='center',
-                        va='bottom', fontsize=8, color=TEXT, xytext=(0, 2),
+        for bar, v in zip(bars, means):
+            ax.annotate(f'{v:.1f}', (bar.get_x() + bar.get_width() / 2, v), ha='center',
+                        va='bottom', fontsize=8, color=ps.TEXT, xytext=(0, 2),
                         textcoords='offset points')
-    ax.axhline(50, color=GT_COLOR, lw=1, ls='--')
-    ax.annotate('50 ms = 20 Hz camera budget', (2.45, 50), ha='right', va='bottom',
-                fontsize=8, color=TEXT, xytext=(0, 2), textcoords='offset points')
+    ax.axhline(50, color=ps.NEUTRAL, lw=1, ls='--')
+    ax.annotate('50 ms = 20 Hz camera budget', (x[-1] + width, 50), ha='right', va='bottom',
+                fontsize=8, color=ps.TEXT, xytext=(0, 2), textcoords='offset points')
     ax.set_xticks(x, ['front end', 'back end', 'total'])
-    ax.set_ylabel('mean latency per frame [ms]', color=TEXT)
-    ax.set_title('Per-frame latency (same compute node, single process)', color='#0b0b0b')
-    ax.grid(axis='y', color='#e6e5e1', lw=0.6)
-    ax.set_axisbelow(True)
-    for s in ax.spines.values():
-        s.set_color('#d4d3cf')
-    ax.tick_params(colors=TEXT)
-    ax.legend(frameon=False, labelcolor=TEXT)
+    ax.set_ylabel('mean latency per frame [ms]', color=ps.TEXT)
+    ax.set_title('Per-frame latency (same compute node, single process)', color=ps.TITLE)
+    ps.style_axes(ax, grid='y')
+    ax.legend(frameon=False, labelcolor=ps.TEXT)
     fig.tight_layout()
-    fig.savefig(out_path, facecolor='#fcfcfb')
+    fig.savefig(out_path, facecolor=ps.SURFACE)
     plt.close(fig)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--gt', required=True, help='state_groundtruth_estimate0/data.csv')
+    parser.add_argument('--seq', required=True, help='EuRoC MH_01_easy folder (contains mav0/)')
+    parser.add_argument('--offset', type=float, default=40.0, help='start offset of the runs [s]')
     args = parser.parse_args()
 
-    gt = load_gt(args.gt)
-    results, timings = {}, {}
-    for name, traj, timing, plots in RUNS:
-        results[name] = evaluate(gt, traj, plots)
-        timings[name] = timing_stats(timing)
+    gt = ve.load_gt(args.seq)
+    accuracy, timings = {}, {}
+    for name, (traj_path, timing_path, plots_dir, _) in RUNS.items():
+        accuracy[name] = (ve.ate(gt, traj_path), ve.rpe(gt, traj_path))
+        timings[name] = timing_stats(timing_path)
+        traj = ve.load_tum(traj_path)
+        with contextlib.redirect_stdout(io.StringIO()):
+            generate_all_plots(gt[0], gt[1], gt[2], traj[:, 0], traj[:, 1:4],
+                               Rotation.from_quat(traj[:, 4:8]).as_matrix(), output_dir=plots_dir)
 
-    parity = frontend_parity('results/python/features_python.txt', 'results/cpp/features_cpp.txt')
-
-    backend = None
-    if os.path.exists('results/python_replay/traj_python.txt') and \
-            os.path.exists('results/cpp_replay/traj_cpp.txt'):
-        a = np.loadtxt('results/python_replay/traj_python.txt')
-        b = np.loadtxt('results/cpp_replay/traj_cpp.txt')
-        if len(a) == len(b):
-            backend = (len(a), np.linalg.norm(a[:, 1:4] - b[:, 1:4], axis=1).max())
-
-    plot_trajectories(gt, results, 'results/trajectory_xy.png')
+    plot_trajectories(gt, 'results/trajectory_xy.png')
     plot_latency(timings, 'results/latency.png')
 
     py, cp = timings['Python'], timings['C++']
+    (py_ate, py_rpe), (cp_ate, cp_rpe) = accuracy['Python'], accuracy['C++']
     lines = [
         '# Python vs C++ stereo MSCKF on EuRoC MH_01_easy',
         '',
-        'Start offset 40 s, deterministic replay (no threads), same compute node.',
-        'Accuracy from the unchanged Code/evaluate.py.',
+        f'Start offset {args.offset:g} s, deterministic replay (no threads), same compute node.',
         '',
         '| | Python | C++ |',
         '|---|---|---|',
-        f"| poses | {results['Python']['poses']} | {results['C++']['poses']} |",
-        f"| ATE RMSE [m] | {results['Python']['ate']:.4f} | {results['C++']['ate']:.4f} |",
-        f"| rotation RMSE [deg] | {results['Python']['rot']:.3f} | {results['C++']['rot']:.3f} |",
-        f"| RPE @ 10 m [% / deg] | {results['Python']['rpe10_t']:.2f} / {results['Python']['rpe10_r']:.2f} "
-        f"| {results['C++']['rpe10_t']:.2f} / {results['C++']['rpe10_r']:.2f} |",
+        f'| ATE RMSE [m] | {py_ate:.4f} | {cp_ate:.4f} |',
+        f'| RPE @ {ve.RPE_LENGTH_M:.0f} m [% / deg] | {py_rpe[0]:.2f} / {py_rpe[1]:.2f} '
+        f'| {cp_rpe[0]:.2f} / {cp_rpe[1]:.2f} |',
     ]
     for stage in ('frontend', 'backend', 'total'):
-        p, c = py[stage], cp[stage]
-        lines.append(f'| {stage} latency mean / p95 [ms] | {p[0]:.2f} / {p[2]:.2f} '
-                     f'| {c[0]:.2f} / {c[2]:.2f} |')
-    lines += [
-        f"| real-time factor | {py['rtf']:.2f}x | {cp['rtf']:.2f}x |",
-        f"| speed-up (total mean) | | {py['total'][0] / cp['total'][0]:.1f}x |",
-        '',
-        '## Parity checks',
-        '',
-    ]
+        lines.append(f'| {stage} latency mean / p95 [ms] | {py[stage][0]:.2f} / {py[stage][1]:.2f} '
+                     f'| {cp[stage][0]:.2f} / {cp[stage][1]:.2f} |')
+    lines += [f"| real-time factor | {py['rtf']:.2f}x | {cp['rtf']:.2f}x |",
+              f"| speed-up (total mean) | | {py['total'][0] / cp['total'][0]:.1f}x |",
+              '', '## Parity checks', '']
+    backend = backend_parity()
     if backend:
-        lines.append(f'- **Back end** (both filters fed the same Python feature file): '
+        lines.append(f'- Back end (both filters fed the same Python feature file): '
                      f'max position difference {backend[1]:.1e} m over {backend[0]} poses.')
-    lines.append(f"- **Front end**: first {parity['identical_prefix']} of {parity['frames']} "
-                 f"frames give identical features (ids and coordinates to 1e-6); mean features "
-                 f"per frame Python {parity['mean_count_py']:.1f}, C++ {parity['mean_count_cpp']:.1f}.")
-    open('results/summary.md', 'w').write('\n'.join(lines) + '\n')
+    same, n, count_py, count_cpp = frontend_parity('results/python/features_python.txt',
+                                                   'results/cpp/features_cpp.txt')
+    lines.append(f'- Front end: the first {same} of {n} frames give identical features (ids, '
+                 f'and coordinates to {FEATURE_TOLERANCE:g}); mean features per frame '
+                 f'Python {count_py:.1f}, C++ {count_cpp:.1f}.')
+    with open('results/summary.md', 'w') as f:
+        f.write('\n'.join(lines) + '\n')
     print('\n'.join(lines))
 
 

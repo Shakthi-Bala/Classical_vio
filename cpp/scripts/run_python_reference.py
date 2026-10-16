@@ -23,8 +23,8 @@ Event order (same as the C++ main): before each stereo frame, every IMU message
 with timestamp <= frame timestamp is fed to both the image processor and the
 filter.
 
-Usage (from the repo root, in the `cv` env):
-  python cpp/scripts/run_python_reference.py --path /path/to/MH_01_easy --out results/python
+Usage (from cpp/, in the `cv` env):
+  python scripts/run_python_reference.py --path /path/to/MH_01_easy --out results/python
 """
 import argparse
 import os

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# One EuRoC sequence with one back end and the fixed front end/filter config.
-#   sbatch -c 2 scripts/run_backend_job.sh BACKEND SEQ OFFSET PATH [BUILD_DIR]
+# One EuRoC sequence with one back end and config/euroc_fixed.yaml.
+#
+#   sbatch -c 2 scripts/run_backend_job.sh BACKEND SEQ OFFSET SEQ_DIR [BUILD_DIR]
 set -euo pipefail
+[[ $# -ge 4 ]] || { echo "usage: $0 msckf|swo SEQ OFFSET SEQ_DIR [BUILD_DIR]" >&2; exit 2; }
 BACKEND=$1; SEQ=$2; OFFSET=$3; DATA=$4; BUILD=${5:-build}
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
-source /home/sbalamurugan/miniconda3/etc/profile.d/conda.sh
+source "${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 conda activate vio_cpp
 OUT="results/backends/$BACKEND/$SEQ"
 mkdir -p "$OUT"
