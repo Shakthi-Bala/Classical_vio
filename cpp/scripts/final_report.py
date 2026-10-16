@@ -15,7 +15,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
+import sys
+
 import ablation_table as at
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'Code'))
 
 TEXT, GRID, SPINE = '#52514e', '#e6e5e1', '#d4d3cf'
 # (column, label, color, marker): validated categorical slots 1-4; marker
@@ -27,6 +31,39 @@ SERIES = [
     ('VINS-Fusion', 'VINS-Fusion (no loop)', '#eda100', '^'),
 ]
 DIVERGED = at.DIVERGED_M
+
+
+def plot_trajectory(seq, path, out):
+    """Top view of one sequence: ground truth and each run, SE3-aligned."""
+    from evaluate import interpolate_gt, umeyama_alignment
+    gt_t, gt_p, gt_q = at.load_gt(path)
+    runs = [('MSCKF fixed', f'results/backends/msckf/{seq}/traj_cpp.txt', '#eb6834'),
+            ('SWO', f'results/backends/swo/{seq}/traj_cpp.txt', '#1baf7a')]
+    labels = {c: l for c, l, _, _ in SERIES}
+    fig, ax = plt.subplots(figsize=(6.5, 5.5), dpi=150)
+    t0 = None
+    for name, traj, color in runs:
+        d = np.loadtxt(traj)
+        d = d[(d[:, 0] >= gt_t[0]) & (d[:, 0] <= gt_t[-1])]
+        g, _ = interpolate_gt(gt_t, gt_p, gt_q, d[:, 0])
+        R, t, _ = umeyama_alignment(d[:, 1:4], g)
+        pa = (R @ d[:, 1:4].T).T + t
+        if t0 is None:
+            t0 = d[0, 0]
+            ax.plot(g[:, 0], g[:, 1], color='#8a8984', lw=2, ls='--', label='ground truth')
+        ate = np.sqrt(np.mean(np.sum((pa - g) ** 2, axis=1)))
+        ax.plot(pa[:, 0], pa[:, 1], color=color, lw=1.6, label=f'{labels[name]}  (ATE {ate:.2f} m)')
+    ax.set_aspect('equal')
+    ax.set_xlabel('x [m]', color=TEXT)
+    ax.set_ylabel('y [m]', color=TEXT)
+    ax.set_title(f'{seq}: filter vs sliding window (same front end)', color='#0b0b0b', fontsize=10)
+    ax.grid(color=GRID, lw=0.6)
+    for sp in ax.spines.values():
+        sp.set_color(SPINE)
+    ax.tick_params(colors=TEXT, labelsize=8)
+    ax.legend(frameon=False, labelcolor=TEXT, fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out, facecolor='#fcfcfb')
 
 
 def main():
@@ -111,6 +148,8 @@ def main():
         lines.append(f'| mean, {len(common)} seq. all completed | ' +
                      ' | '.join(f"{np.mean([r[c] for r in common]):.3f}" for c in cols) + ' |')
     open('results/final/summary.md', 'w').write('\n'.join(lines) + '\n')
+    mh05 = next(s for s in sequences if s['sequence'] == 'MH_05_difficult')
+    plot_trajectory('MH_05_difficult', mh05['path'], 'results/final/traj_MH_05_difficult.png')
     print('\n'.join(lines))
 
 
