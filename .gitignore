@@ -16,3 +16,5 @@ cpp/results/slurm/
 cpp/results/swo_dev/
 cpp/results/backends/*/*/timing_cpp.csv
 cpp/results/backends/*/*/profile_stages.csv
+cpp/results/timing/*/features_*.txt
+cpp/results/timing/*/traj_*.txt
