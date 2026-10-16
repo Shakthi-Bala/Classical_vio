@@ -198,20 +198,37 @@ End to end = from the arrival of the later image of a pair to the published odom
 | ATE RMSE [m] | Python | MSCKF = Python | MSCKF fixed | SWO | VINS-Fusion |
 |---|---|---|---|---|---|
 | MH_01_easy | 0.129 | 0.128 | 0.088 | 0.101 | 0.208 |
-| MH_02_easy | 0.472 | 0.576 | 0.205 | 0.083 | fail |
-| MH_03_medium | 0.214 | 0.214 | 0.234 | 0.215 | fail |
-| MH_04_difficult | 0.880 | 1.030 | 0.415 | 0.280 | fail |
-| MH_05_difficult | 0.819 | 0.869 | 0.420 | 0.175 | fail |
-| V1_01_easy | 0.346 | 0.384 | 0.117 | 0.078 | fail |
-| V1_02_medium | 0.128 | 0.128 | 0.148 | 0.082 | fail |
-| V1_03_difficult | 0.429 | 0.429 | 0.244 | 0.299 | fail |
-| V2_01_easy | 0.276 | 0.270 | 0.095 | 0.117 | fail |
-| V2_02_medium | 0.204 | 0.204 | 0.100 | 0.210 | fail |
-| V2_03_difficult | fail | 2.535 | 0.677 | div. | fail |
-| failures | 1 | 0 | 0 | 1 | 10 |
-| mean, 1 seq. all completed | 0.129 | 0.128 | 0.088 | 0.101 | 0.208 |
+| MH_02_easy | 0.472 | 0.576 | 0.205 | 0.083 | 0.214 |
+| MH_03_medium | 0.214 | 0.214 | 0.234 | 0.215 | 0.313 |
+| MH_04_difficult | 0.880 | 1.030 | 0.415 | 0.280 | 0.439 |
+| MH_05_difficult | 0.819 | 0.869 | 0.420 | 0.175 | 0.312 |
+| V1_01_easy | 0.346 | 0.384 | 0.117 | 0.078 | 0.113 |
+| V1_02_medium | 0.128 | 0.128 | 0.148 | 0.082 | 0.107 |
+| V1_03_difficult | 0.429 | 0.429 | 0.244 | 0.299 | 0.113 |
+| V2_01_easy | 0.276 | 0.270 | 0.095 | 0.117 | 0.131 |
+| V2_02_medium | 0.204 | 0.204 | 0.100 | 0.210 | 0.123 |
+| V2_03_difficult | fail | 2.535 | 0.677 | div. | 0.313 |
+| failures | 1 | 0 | 0 | 1 | 0 |
+| mean, 10 seq. all completed | 0.390 | 0.423 | 0.207 | 0.164 | 0.207 |
 
-VINS-Fusion on the other 10 sequences: in progress.
+What it shows:
+- **The C++ sliding window is the most accurate** where it works: mean 0.164 m on the
+  10 sequences all methods complete, against 0.207 m for both the fixed MSCKF and
+  VINS-Fusion. It wins clearly on the Machine Hall sequences (MH_02 0.08 m, MH_05 0.18 m).
+- **VINS-Fusion is the most robust**: it completes V2_03 at 0.31 m (our MSCKF 0.68 m,
+  our sliding window diverges) and is best on V1_03. It has two things ours lacks: a
+  visual-inertial initialization that does not assume a static start, and failure
+  detection with re-initialization.
+- **The fixed C++ MSCKF matches VINS-Fusion on average** (0.207 m each) at half the
+  sliding window's compute, and never fails.
+- **Python -> C++ fixed**: 0.390 -> 0.207 m on the same 10 sequences, 3-4x faster.
+
+VINS-Fusion trajectories, the summary CSV and the patch set applied to the ROS 2 port
+([zinuok/VINS-Fusion-ROS2](https://github.com/zinuok/VINS-Fusion-ROS2) @ 72023bc) are in
+[`results/vins/`](results/vins). Patches: vio.csv timestamps were truncated to whole
+seconds; reliable sensor QoS (best effort lost 902 of 7364 images); a single-threaded
+executor (the port's multi-threaded executor started ~190 threads on 192-core nodes and
+froze); a frame-drop switch (off for these runs). Every run lost 0 messages at rate 1.0.
 
 All runs use the deterministic replay, the start offsets of
 [`config/euroc_offsets.csv`](config/euroc_offsets.csv) and the same ATE code.

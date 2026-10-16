@@ -68,7 +68,7 @@ def plot_trajectory(seq, path, out):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--vins', default='/scratch/sbalamurugan/ros2_vio/results/vins_{seq}_tum.txt')
+    parser.add_argument('--vins', default='results/vins/vins_{seq}_tum.txt')
     args = parser.parse_args()
 
     rows = []
@@ -85,7 +85,7 @@ def main():
         crashed = os.path.exists(log) and 'Traceback' in open(log).read()
         vins_path = args.vins.format(seq=seq)
         if seq == 'MH_01_easy' and not os.path.exists(vins_path):
-            vins_path = '/scratch/sbalamurugan/ros2_vio/results/vins_mh01_tum.txt'
+            vins_path = 'results/vins/vins_MH_01_easy_tum.txt'
         rows.append({
             'sequence': seq,
             'Python': None if crashed else at.ate(gt, f'{py_dir}/traj_python.txt'),

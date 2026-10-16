@@ -12,7 +12,7 @@ replay), 4.02x vs 1.45x real time, 12.4 vs 34.5 ms per frame. See [README.md](RE
 **Phase 2 status (2026-10-16, sim):** profiling done (12.4 -> 8.6 ms/frame), quirk
 ablation on 11 sequences done (fixed MSCKF mean ATE 0.615 -> 0.249 m), Ceres sliding
 window done (mean 0.164 m on 10 of 11, diverges on V2_03), ROS 2 node done (real-time
-bag = offline result), VINS-Fusion: MH_01 done, other sequences in progress.
+bag = offline result), VINS-Fusion on all 11 sequences done.
 Results: [README.md](README.md).
 **Phase 3 (later):** RealSense live / Jetson / PeAR drone.
 
