@@ -10,8 +10,9 @@ The README GIF was made with:
   python scripts/make_demo_gif.py --seq-path /path/to/MH_05_difficult \
       --run-dir results/demo/MH_05_difficult \
       --msckf results/backends/msckf/MH_05_difficult/traj_cpp.txt \
-      --out results/final/demo_mh05.gif --step 12 --fps 11 --width 800 --lossy 110
-(every 12th frame at 11 fps: about 6x real time). `run-dir` holds a
+      --out results/final/demo_mh05.gif --step 16 --fps 10 --width 720 --colors 64 \
+      --gray-levels 24 --lossy 150
+(every 16th frame at 10 fps: about 8x real time, 5.4 MB). `run-dir` holds a
 sliding-window run with --dump-features (features_cpp.txt, traj_cpp.txt,
 timing_cpp.csv).
 """
@@ -111,7 +112,7 @@ def main():
     H = W * 0.47
     fig = plt.figure(figsize=(W, H), dpi=dpi, facecolor=SURFACE)
     ax_img = fig.add_axes([0.012, 0.03, 0.56, 0.78])
-    ax_tr = fig.add_axes([0.64, 0.17, 0.34, 0.64])
+    ax_tr = fig.add_axes([0.64, 0.17, 0.34, 0.59])   # top clear of the subtitle
     fig.text(0.012, 0.93, 'Stereo visual-inertial odometry in C++17', color=TEXT, fontsize=13,
              weight='bold', va='center')
     fig.text(0.012, 0.86, f'EuRoC {seq}  ·  live feature tracks (colour = track age)  ·  '

@@ -4,7 +4,7 @@
 
 ![demo](results/final/demo_mh05.gif)
 
-*EuRoC MH_05_difficult at about 6x speed: feature tracks from the front end (left, colour =
+*EuRoC MH_05_difficult at about 8x speed: feature tracks from the front end (left, colour =
 track age, contrast-enhanced for display) and both back ends' trajectories against ground
 truth (right). Rendered by [`scripts/make_demo_gif.py`](scripts/make_demo_gif.py) from the
 runs' own outputs.*
