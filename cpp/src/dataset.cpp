@@ -119,6 +119,12 @@ StereoMsg EuRoCDataset::load_stereo(size_t i) const {
   if (msg.cam0_image.empty() || msg.cam1_image.empty()) {
     throw std::runtime_error("cannot read stereo pair " + cam0_files_[i]);
   }
+  // TUM-VI's "_16" exports are 16-bit; the front end works on 8-bit images.
+  for (cv::Mat* img : {&msg.cam0_image, &msg.cam1_image}) {
+    if (img->depth() == CV_16U) {
+      img->convertTo(*img, CV_8U, 1.0 / 256.0);
+    }
+  }
   return msg;
 }
 

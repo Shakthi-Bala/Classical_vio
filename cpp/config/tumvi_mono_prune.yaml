@@ -1,0 +1,4 @@
+# tumvi_mono.yaml with the MSCKF's grid policy (see euroc_mono_prune.yaml).
+base: tumvi_mono.yaml
+
+mono_prune_first: true

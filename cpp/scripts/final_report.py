@@ -1,8 +1,8 @@
 """
 Final comparison on all EuRoC sequences: Python MSCKF, C++ MSCKF (Python
-behaviour), C++ MSCKF and C++ sliding window (config/euroc_mono.yaml),
-VINS-Fusion; plus the C++ back ends without cam0-only features
-(config/euroc_fixed.yaml).
+behaviour), C++ MSCKF (config/euroc_mono_prune.yaml), C++ sliding window
+(config/euroc_mono.yaml), VINS-Fusion; plus both C++ back ends with all three
+front-end settings (stereo only, cam0-only features, cam0-only pruned first).
 
 Usage (from cpp/): python scripts/final_report.py [--vins PATTERN_WITH_{seq}]
 Writes, in results/final/: ate_table.csv, rpe_table.csv, summary.md (tables),
@@ -22,8 +22,9 @@ import vio_eval as ve
 
 OUT = 'results/final'
 COLUMNS = ['Python', 'MSCKF = Python', 'MSCKF', 'SWO', 'VINS-Fusion']
-MONO_COLUMNS = ['MSCKF stereo only', 'MSCKF', 'SWO stereo only', 'SWO']
-ALL_COLUMNS = COLUMNS + ['MSCKF stereo only', 'SWO stereo only']
+MONO_COLUMNS = ['MSCKF stereo only', 'MSCKF mono', 'MSCKF mono, prune', 'SWO stereo only',
+                'SWO mono', 'SWO mono, prune']
+ALL_COLUMNS = COLUMNS + [c for c in MONO_COLUMNS if c not in COLUMNS]
 # Plotted series: (column, label, colour, marker). Marker shapes are the
 # secondary encoding the two low-contrast palette slots need.
 SERIES = [
@@ -38,11 +39,15 @@ def trajectory_paths(seq, vins_pattern):
     return {
         'Python': ve.python_trajectory(seq),
         'MSCKF = Python': f'results/ablation/{seq}/baseline/traj_cpp.txt',
-        'MSCKF': f'results/backends/msckf_mono/{seq}/traj_cpp.txt',
+        'MSCKF': f'results/backends/msckf_mono_prune/{seq}/traj_cpp.txt',
         'SWO': f'results/backends/swo_mono/{seq}/traj_cpp.txt',
         'VINS-Fusion': vins_pattern.format(seq=seq),
         'MSCKF stereo only': f'results/backends/msckf/{seq}/traj_cpp.txt',
+        'MSCKF mono': f'results/backends/msckf_mono/{seq}/traj_cpp.txt',
+        'MSCKF mono, prune': f'results/backends/msckf_mono_prune/{seq}/traj_cpp.txt',
         'SWO stereo only': f'results/backends/swo/{seq}/traj_cpp.txt',
+        'SWO mono': f'results/backends/swo_mono/{seq}/traj_cpp.txt',
+        'SWO mono, prune': f'results/backends/swo_mono_prune/{seq}/traj_cpp.txt',
     }
 
 
@@ -118,9 +123,9 @@ def write_tables(table):
             w.writerow([seq] + ['' if v is None else f'{v[0]:.3f}' for v in rp] +
                        ['' if v is None else f'{v[1]:.3f}' for v in rp])
 
-    lines = (ate_lines(table, COLUMNS) + [''] + rpe_lines(table, COLUMNS) + ['', 'Cam0-only '
-             '(mono) features, config/euroc_mono.yaml vs config/euroc_fixed.yaml:', ''] +
-             ate_lines(table, MONO_COLUMNS))
+    lines = (ate_lines(table, COLUMNS) + [''] + rpe_lines(table, COLUMNS) + ['', 'Front-end '
+             'settings: euroc_fixed.yaml (stereo only), euroc_mono.yaml (mono), '
+             'euroc_mono_prune.yaml (mono, prune):', ''] + ate_lines(table, MONO_COLUMNS))
     with open(f'{OUT}/summary.md', 'w') as f:
         f.write('\n'.join(lines) + '\n')
     return lines

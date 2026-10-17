@@ -1,0 +1,7 @@
+# euroc_mono.yaml plus: a full grid cell drops cam0-only features
+# before stereo ones. The filter gets depth only from stereo or from motion,
+# so it does better when stereo features keep their slots; the sliding window
+# does better without this (README "Cam0-only features").
+base: euroc_mono.yaml
+
+mono_prune_first: true
