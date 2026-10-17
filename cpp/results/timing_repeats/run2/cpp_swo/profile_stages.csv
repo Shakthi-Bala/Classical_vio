@@ -1,0 +1,15 @@
+stage,total_ms,calls,ms_per_frame
+frontend,19259.377,2882,6.6826
+frontend/*/stereo_match,11583.858,5763,4.0194
+frontend/add_new_features,8962.449,2881,3.1098
+frontend/add_new_features/fast_detect,2572.418,2881,0.8926
+frontend/build_pyramids,1606.813,2882,0.5575
+frontend/initialize_first_frame,193.217,1,0.0670
+frontend/prune_features,6.435,2881,0.0022
+frontend/publish,49.441,2882,0.0172
+frontend/track_features,8427.739,2881,2.9243
+frontend/track_features/integrate_imu,10.237,2881,0.0036
+frontend/track_features/klt_temporal,2463.034,2881,0.8546
+swo/marginalize,5134.404,1290,1.7815
+swo/optimize,25085.191,1299,8.7041
+swo/remove_outliers,454.300,1299,0.1576

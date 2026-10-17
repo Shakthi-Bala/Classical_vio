@@ -1,0 +1,7 @@
+sequence,offset_s,path
+dataset-room1_512_16,3.6,/scratch/sbalamurugan/tumvi/dataset-room1_512_16
+dataset-room2_512_16,2.6,/scratch/sbalamurugan/tumvi/dataset-room2_512_16
+dataset-room3_512_16,1.7,/scratch/sbalamurugan/tumvi/dataset-room3_512_16
+dataset-room4_512_16,0.9,/scratch/sbalamurugan/tumvi/dataset-room4_512_16
+dataset-room5_512_16,2.5,/scratch/sbalamurugan/tumvi/dataset-room5_512_16
+dataset-room6_512_16,1.7,/scratch/sbalamurugan/tumvi/dataset-room6_512_16

@@ -10,20 +10,22 @@ A stereo MSCKF implemented in Python for a WPI course (RBE/CS549), then rebuilt 
 and taken further:
 
 - **Exact port:** the C++ filter matches the Python to 1e-9 m on identical input.
-- **3x faster:** 8.1 ms per frame on one core (6.2x real time), against 25.3 ms in Python.
+- **3x faster:** 8.1 ms per frame on one core (6.2x real time), against 25.2 ms in Python.
 - **Ceres sliding-window optimizer** written from scratch: IMU preintegration,
   marginalization, analytic Jacobians.
 - **0 failures on all 11 EuRoC sequences**, after finding and fixing why stereo tracking
   died on the hardest one (V2_03).
-- **Beats VINS-Fusion:** the sliding window averages 0.156 m against 0.217 m, at a third of
-  its latency per frame in ROS 2.
-- **Tested:** 22 unit tests in CI; the inherited Python behaviours were ablated on 11
-  sequences.
+- **Beats VINS-Fusion:** the sliding window averages 0.156 m and the MSCKF 0.197 m, against
+  0.217 m, at a third and a sixth of its latency per frame in ROS 2.
+- **Second dataset:** on TUM-VI (handheld fisheye) the MSCKF averages 0.129 m with the same
+  filter settings.
+- **Tested:** 22 unit tests in CI on x86-64 and arm64, a Docker image; the inherited Python
+  behaviours were ablated on 11 sequences.
 
 | EuRoC MAV | mean ATE, 10 seq. | mean ATE, all 11 | failures | latency / frame (MH_01) |
 |---|---|---|---|---|
 | Python MSCKF | 0.390 m | - | 1 (crash) | 25 ms (offline, no ROS node) |
-| C++ MSCKF | 0.206 m | 0.200 m | 0 | 10.7 ms end to end in ROS 2, 1 core |
+| C++ MSCKF | 0.195 m | 0.197 m | 0 | 10.1 ms end to end in ROS 2, 1 core |
 | C++ sliding window | **0.152 m** | **0.156 m** | 0 | 19.1 ms end to end in ROS 2, 1 core |
 | VINS-Fusion (no loop closure) | 0.207 m | 0.217 m | 0 | 61 ms end to end in ROS 2, 4 cores |
 
@@ -32,7 +34,7 @@ method completes; the Python crashes on V2_03.*
 
 <table>
 <tr>
-<td width="50%" valign="top"><a href="cpp/README.md#final-comparison-11-euroc-sequences"><img src="cpp/results/final/accuracy_vs_latency.png" width="100%"></a><br><b>Accuracy vs latency.</b> The C++ sliding window is the most accurate, the C++ MSCKF matches VINS-Fusion, and both are 3–6x faster per frame.</td>
+<td width="50%" valign="top"><a href="cpp/README.md#final-comparison-11-euroc-sequences"><img src="cpp/results/final/accuracy_vs_latency.png" width="100%"></a><br><b>Accuracy vs latency.</b> The C++ sliding window is the most accurate, the C++ MSCKF slightly ahead of VINS-Fusion, and both are 3–6x faster per frame.</td>
 <td width="50%" valign="top"><a href="cpp/README.md#final-comparison-11-euroc-sequences"><img src="cpp/results/final/ate_per_sequence.png" width="100%"></a><br><b>Every EuRoC sequence.</b> Trajectory error per sequence against the Python original and VINS-Fusion.</td>
 </tr>
 <tr>
@@ -40,7 +42,7 @@ method completes; the Python crashes on V2_03.*
 <td width="50%" valign="top"><a href="cpp/README.md#sliding-window-optimizer-ceres-back-end"><img src="cpp/results/final/traj_MH_05_difficult.png" width="100%"></a><br><b>Filter vs optimizer.</b> MSCKF and Ceres sliding window on the same front end, MH_05_difficult.</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><a href="cpp/README.md#profiling-and-optimization"><img src="cpp/results/profile/stages_before_after.png" width="100%"></a><br><b>Profiling.</b> Stage timers and flame graphs without perf access: 12.8 → 8.6 ms per frame, output unchanged.</td>
+<td width="50%" valign="top"><a href="cpp/README.md#profiling-and-optimization"><img src="cpp/results/profile/stages_before_after.png" width="100%"></a><br><b>Profiling.</b> Stage timers and flame graphs without perf access: 10.4 → 8.1 ms per frame, output unchanged.</td>
 <td width="50%" valign="top"><a href="cpp/README.md#python-quirk-ablation-11-euroc-sequences"><img src="cpp/results/ablation/ablation.png" width="100%"></a><br><b>Ablation of inherited quirks.</b> Each behaviour of the Python code tested on 11 sequences; the useful fixes cut error 0.615 → 0.249 m.</td>
 </tr>
 </table>

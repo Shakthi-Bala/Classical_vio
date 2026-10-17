@@ -3,6 +3,14 @@
 # noise of euroc.yaml is kept (TUM-VI's Kalibr values are close to EuRoC's).
 base: euroc_mono.yaml
 
+# The sliding window's pixel settings scaled by the focal length ratio
+# 191 / 458 (TUM-VI / EuRoC), so they mean the same angles.
+swo:
+  kf_parallax_px: 4.2
+  pixel_sigma: 0.63
+  huber_px: 0.63
+  outlier_px: 1.25
+
 cam0:
   distortion_model: equidistant
   intrinsics: [190.97847715128717, 190.9733070521226, 254.93170605935475, 256.8974428996504]
