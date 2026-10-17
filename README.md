@@ -17,9 +17,11 @@ and taken further:
   died on the hardest one (V2_03).
 - **Beats VINS-Fusion:** the sliding window averages 0.156 m and the MSCKF 0.197 m, against
   0.217 m, at a third and a sixth of its latency per frame in ROS 2.
+- **Loop closure** (4-DoF pose graph, ORB + stereo PnP loops): 0.111 m (MSCKF) and 0.105 m
+  (sliding window) against 0.132 m for VINS-Fusion with its own loop closure.
 - **Second dataset:** on TUM-VI (handheld fisheye) the MSCKF averages 0.129 m with the same
   filter settings.
-- **Tested:** 22 unit tests in CI on x86-64 and arm64, a Docker image; the inherited Python
+- **Tested:** 24 unit tests in CI on x86-64 and arm64, a Docker image; the inherited Python
   behaviours were ablated on 11 sequences.
 
 | EuRoC MAV | mean ATE, 10 seq. | mean ATE, all 11 | failures | latency / frame (MH_01) |

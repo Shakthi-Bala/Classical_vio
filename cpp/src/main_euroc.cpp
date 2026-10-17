@@ -291,6 +291,13 @@ int main(int argc, char** argv) {
       for (const auto& [t, pose] : loop->final_trajectory()) {
         write_pose(traj_final, t, pose);
       }
+      std::ofstream loops_csv(args.out + "/loops.csv");
+      loops_csv << "t_candidate,t_current,tx,ty,tz,yaw,inliers\n";
+      for (const auto& l : loop->loops()) {
+        std::snprintf(line, sizeof(line), "%.9f,%.9f,%.6f,%.6f,%.6f,%.6f,%d\n", l.t_candidate,
+                      l.t_current, l.t_ij(0), l.t_ij(1), l.t_ij(2), l.yaw_ij, l.inliers);
+        loops_csv << line;
+      }
       const auto& st = loop->stats();
       std::printf("loop closure: %ld keyframes, %ld candidates checked, %ld loops\n",
                   st.keyframes, st.candidates, st.loops);

@@ -63,7 +63,8 @@ struct LoopConfig {
   double min_time_gap = 20.0;      // loop candidates are at least this much older [s]
   double search_radius = 4.0;      // and this close by the corrected position [m]
   double max_view_angle = 0.8;     // and look in a similar direction [rad]
-  int min_inliers = 25;            // PnP RANSAC inliers to accept a loop
+  int min_inliers = 40;            // PnP RANSAC inliers to accept a loop
+  double max_loop_correction = 1.0;   // loop vs current pose estimate [m]
   double pnp_px = 3.0;             // PnP RANSAC reprojection threshold [px]
 };
 

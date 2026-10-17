@@ -24,6 +24,7 @@ It is benchmarked against VINS-Fusion on all 11 EuRoC sequences. The original pl
 | Cam0-only features | V2_03 lost all stereo matches for up to 7 s. Keeping cam0-only tracks brings it from 0.677 m (MSCKF) and divergence (sliding window) to 0.217 / 0.200 m. |
 | ROS 2 node | Real-time bag playback gives the same poses as the offline run (to 4e-9 m, the print precision), at 10.1 ms end to end for the MSCKF |
 | vs VINS-Fusion | Mean ATE over all 11 sequences: sliding window 0.156 m, MSCKF 0.197 m, VINS-Fusion 0.217 m. VINS-Fusion is best on V1_03. |
+| Loop closure | 4-DoF pose graph with ORB / stereo PnP loops: mean ATE 0.111 m (MSCKF) and 0.105 m (sliding window), against 0.132 m for VINS-Fusion with its loop closure |
 | Second dataset | TUM-VI room1–6 (handheld fisheye): MSCKF 0.129 m mean ATE, no failures, with EuRoC's settings |
 
 ![accuracy vs latency](results/final/accuracy_vs_latency.png)
@@ -33,7 +34,8 @@ Sections: [Phase 1 port](#phase-1-python-vs-c-on-euroc-mh_01_easy) ·
 [Quirk ablation](#python-quirk-ablation-11-euroc-sequences) ·
 [Cam0-only features](#cam0-only-features-what-broke-v2_03) ·
 [Sliding window](#sliding-window-optimizer-ceres-back-end) · [ROS 2](#ros-2-node) ·
-[Final comparison](#final-comparison-11-euroc-sequences) · [TUM-VI](#second-dataset-tum-vi) ·
+[Final comparison](#final-comparison-11-euroc-sequences) · [Loop closure](#loop-closure) ·
+[TUM-VI](#second-dataset-tum-vi) ·
 [Build](#build) ·
 [Reproduce](#run-and-reproduce) · [Code tour](#code-tour-read-in-this-order) ·
 [Quirks](#python-quirks-reproduced-on-purpose)
@@ -366,6 +368,78 @@ and is scored on the same time span as ours.
 | C++ MSCKF | 8.41 ± 0.01 ms | 11.17 ± 0.02 ms | 5.94x |
 | C++ sliding window | 17.41 ± 0.06 ms | 35.28 ± 0.14 ms | 2.87x |
 
+## Loop closure
+
+`main_euroc --loop` adds loop closure on top of either back end
+([`include/msckf/loop/`](include/msckf/loop), [`src/loop/`](src/loop)). It never feeds back
+into the VIO: the VIO trajectory stays byte-identical, and loop closure corrects it.
+
+- **Keyframes** every 0.3 m or 15 degrees: ORB features on cam0, triangulated with cam1
+  where a stereo match passes the epipolar check (depth up to 8 m; the baseline is 11 cm).
+- **Candidates** are keyframes at least 20 s older, within 4 m of the current corrected
+  position and looking the same way. There is no appearance-based place recognition (bag
+  of words); this relies on the drift staying below 4 m, which holds on EuRoC.
+- **Verification**: ORB matches from the candidate's 3-D points to the current keyframe,
+  PnP RANSAC refined with Levenberg-Marquardt, at least 40 inliers, and at most 1 m of
+  disagreement with the current pose estimate.
+- **4-DoF pose graph** (x, y, z, yaw, as in VINS-Fusion; roll and pitch come from gravity):
+  edges to the previous 4 keyframes from the VIO (sigma 2 cm / 0.6 degrees) and loop edges
+  (5 cm / 1.1 degrees, Huber loss from 3 sigma), solved with Ceres after each loop.
+- **Output**: `traj_loop.txt` corrects each pose with the loops found up to that moment
+  (online), `traj_loop_final.txt` corrects every pose with the final graph.
+
+| ATE RMSE [m] | MSCKF | MSCKF loop online | MSCKF loop final | SWO | SWO loop online | SWO loop final | VINS-Fusion | VINS-Fusion loop final |
+|---|---|---|---|---|---|---|---|---|
+| MH_01_easy | 0.091 | 0.088 | 0.079 | 0.064 | 0.077 | 0.047 | 0.208 | 0.149 |
+| MH_02_easy | 0.138 | 0.133 | 0.110 | 0.077 | 0.071 | 0.041 | 0.214 | 0.128 |
+| MH_03_medium | 0.225 | 0.124 | 0.101 | 0.230 | 0.119 | 0.115 | 0.313 | 0.124 |
+| MH_04_difficult | 0.414 | 0.452 | 0.236 | 0.256 | 0.225 | 0.141 | 0.439 | 0.279 |
+| MH_05_difficult | 0.414 | 0.423 | 0.143 | 0.179 | 0.211 | 0.097 | 0.312 | 0.306 |
+| V1_01_easy | 0.124 | 0.136 | 0.095 | 0.061 | 0.111 | 0.069 | 0.113 | 0.075 |
+| V1_02_medium | 0.165 | 0.116 | 0.092 | 0.069 | 0.096 | 0.088 | 0.107 | 0.064 |
+| V1_03_difficult | 0.217 | 0.184 | 0.119 | 0.277 | 0.175 | 0.173 | 0.113 | 0.112 |
+| V2_01_easy | 0.077 | 0.072 | 0.052 | 0.102 | 0.094 | 0.053 | 0.131 | 0.050 |
+| V2_02_medium | 0.086 | 0.078 | 0.077 | 0.203 | 0.144 | 0.142 | 0.123 | 0.087 |
+| V2_03_difficult | 0.217 | 0.137 | 0.117 | 0.200 | 0.247 | 0.193 | 0.313 | 0.083 |
+| mean, all 11 | 0.197 | 0.176 | 0.111 | 0.156 | 0.143 | 0.105 | 0.217 | 0.132 |
+
+"Final" for VINS-Fusion is its `vio_loop.csv` after the run: the final pose graph, at
+keyframes only. Ours corrects every frame.
+
+- **With loop closure, both C++ back ends are more accurate than VINS-Fusion with its own
+  loop closure**: mean ATE 0.111 m (MSCKF) and 0.105 m (sliding window) against 0.132 m.
+  The final graph improves on the VIO on 11 of 11 sequences (MSCKF) and 9 of 11 (sliding
+  window; V1_01 and V1_02 get slightly worse). VINS-Fusion is best on 4 of 11 (V1_02,
+  V1_03, V2_01, V2_03).
+- **Online** (each pose corrected as it is published) the gain is smaller: 0.176 m and
+  0.143 m. Poses before a loop cannot be corrected after the fact.
+- **The comparison is not fully like for like**: our candidates come from pose proximity,
+  while VINS-Fusion recognizes places by appearance (DBoW2), which also works after large
+  drift or a restart.
+- **Cost**: 1.9 ms per frame on average in the same thread as the VIO (p95 15.6 ms,
+  max 49 ms when the graph is optimized). About 38 loops per sequence.
+
+How it got there:
+- **The first version made things worse** (MH_01 MSCKF 0.091 -> 0.178 m). Each accepted
+  loop is written to `loops.csv`, and comparing those relative poses with ground truth
+  showed a median translation error of 0.19 m (p90 0.83 m): many wrong loops. Requiring 40
+  instead of 25 inliers, refining PnP, dropping stereo points beyond 8 m and the 1 m gate
+  brought it to 0.036 m.
+- **Equal weights for VIO and loop edges** still let loops pull too hard. Weighting them by
+  their expected error fixed that. A synthetic test (`test/test_loop.cpp`: one lap with
+  1.7 degrees and ~0.2 m of drift, one loop edge) then showed that a Huber loss from
+  1 sigma treats a genuine 4-sigma loop as an outlier and removes only a fifth of the drift.
+  From 3 sigma, the loop removes 45 % of the position and 67 % of the yaw drift. On EuRoC the
+  two settings give similar means (1 sigma: 0.114 / 0.111 m; 3 sigma: 0.111 / 0.105 m).
+- **VINS-Fusion's loop closure was silently broken** in the ROS 2 port. `pubTF` returns
+  on its first line, so the camera-IMU extrinsics are never published, `loop_fusion` uses
+  a zero rotation, its PnP returns NaN, and no loop is ever accepted (MH_01 0.208 m with
+  and without "loop closure"). The patch publishes the extrinsics; it is in
+  [`results/vins/vins_patches.diff`](results/vins/vins_patches.diff).
+
+Run with `LOOP=1 scripts/run_backend_job.sh ...`; table:
+[`scripts/loop_report.py`](scripts/loop_report.py).
+
 ## Second dataset: TUM-VI
 
 Both back ends on the six TUM-VI room sequences (512 x 512 fisheye stereo at 20 Hz,
@@ -424,14 +498,15 @@ $CONDA_PREFIX/bin/cmake --build cpp/build
 ctest --test-dir cpp/build --output-on-failure
 ```
 
-The 22 unit tests (`test/`) cover:
+The 24 unit tests (`test/`) cover:
 - `math_utils` (8 tests);
 - feature triangulation, including cam0-only observations (4);
 - the sliding-window building blocks: manifold, preintegration bias Jacobians, IMU factor,
   marginalization, analytic vs autodiff Jacobians (5);
 - both back ends end to end on a synthetic trajectory (5): exact features and an unknown
   accelerometer bias, with stereo and half cam0-only observations. A control test checks
-  that the same run without features drifts by more than 1 m.
+  that the same run without features drifts by more than 1 m;
+- the loop-closure pose graph: angle conversions, and one loop edge removing drift (2).
 
 CI ([`.github/workflows/cpp.yml`](../.github/workflows/cpp.yml)) builds with Ubuntu 24.04's
 packages and runs the tests on x86-64 and on arm64 (the Jetson's architecture), and builds
@@ -518,6 +593,7 @@ Then the reports and plots:
 | [msckf](src/msckf.cpp) | `msckf.py` | fixed-size vs dynamic Eigen matrices; `conservativeResize`; thin QR; `ldlt().solve` instead of inverses; aliasing (`symmetrize`, `.eval()`) |
 | [image_processor](src/image_processor.cpp) | `image.py` | OpenCV C++ API; a member template (`stereo_match<PointT>`) that mirrors numpy's float32/float64 choice |
 | [main_euroc](src/main_euroc.cpp) | `vio.py` | `std::optional`, `std::chrono::steady_clock` timing |
+| [loop/](src/loop) | - | Ceres `AutoDiffCostFunction` with a templated residual; OpenCV ORB and PnP |
 | [test/](test/) | `Code/test/` | gtest: `TEST`, `EXPECT_NEAR`, seeded random numbers, a synthetic world |
 
 ## Python quirks reproduced on purpose

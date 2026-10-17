@@ -13,7 +13,7 @@ namespace {
 constexpr int kMaxCandidates = 3;            // PnP attempts per keyframe
 constexpr float kRatioTest = 0.75f;          // Lowe's ratio for ORB matches
 constexpr double kMaxEpipolarPx = 2.0;       // stereo match check [px]
-constexpr double kMinDepth = 0.1, kMaxDepth = 30.0;   // stereo landmarks [m]
+constexpr double kMinDepth = 0.1, kMaxDepth = 8.0;    // stereo landmarks [m]: 11 cm baseline
 constexpr double kMaxLoopYaw = 30.0 * M_PI / 180.0;   // loop vs current estimate
 
 // Pixel -> undistorted normalized coordinates.
@@ -115,7 +115,7 @@ bool LoopClosure::is_keyframe(const Isometry3d& T_w_b) const {
 }
 
 bool LoopClosure::verify(const KeyFrame& candidate, const KeyFrame& current, Eigen::Matrix3d& R,
-                         Eigen::Vector3d& t) const {
+                         Eigen::Vector3d& t, int& n_inliers) const {
   const auto matches = match(candidate.landmark_descriptors, current.descriptors);
   if (static_cast<int>(matches.size()) < cfg_.min_inliers) {
     return false;
@@ -135,6 +135,15 @@ bool LoopClosure::verify(const KeyFrame& candidate, const KeyFrame& current, Eig
   if (!ok || static_cast<int>(inliers.size()) < cfg_.min_inliers) {
     return false;
   }
+  n_inliers = static_cast<int>(inliers.size());
+  // Refine on the inliers (EPnP alone is not accurate enough for loop edges).
+  std::vector<cv::Point3d> object_in;
+  std::vector<cv::Point2d> image_in;
+  for (const int k : inliers) {
+    object_in.push_back(object[k]);
+    image_in.push_back(image[k]);
+  }
+  cv::solvePnPRefineLM(object_in, image_in, cv::Matx33d::eye(), cv::noArray(), rvec, tvec);
   cv::Mat R_cv;
   cv::Rodrigues(rvec, R_cv);
   cv::cv2eigen(R_cv, R);
@@ -167,7 +176,8 @@ void LoopClosure::try_loops(int current) {
     ++stats_.candidates;
     Eigen::Matrix3d R_cc;   // candidate camera -> current camera
     Eigen::Vector3d t_cc;
-    if (!verify(keyframes_[i], keyframes_[current], R_cc, t_cc)) {
+    int inliers = 0;
+    if (!verify(keyframes_[i], keyframes_[current], R_cc, t_cc, inliers)) {
       continue;
     }
     // Current body in the candidate body frame: T_bc * T_cand_cam_cur_cam * T_cb.
@@ -179,13 +189,15 @@ void LoopClosure::try_loops(int current) {
     // Reject loops that disagree strongly with the current estimate.
     const Isometry3d T_i = graph_.pose(i);
     const Eigen::Matrix3d R_cur_loop = T_i.R * R_ij;
-    if ((T_i.t + T_i.R * t_ij - T_cur.t).norm() > cfg_.search_radius ||
+    if ((T_i.t + T_i.R * t_ij - T_cur.t).norm() > cfg_.max_loop_correction ||
         std::abs(wrap(yaw_of(R_cur_loop) - yaw_of(T_cur.R))) > kMaxLoopYaw) {
       continue;
     }
     // Yaw measured as in VINS-Fusion: with the candidate's VIO roll and pitch.
     const Eigen::Matrix3d& R_i_vio = graph_.vio_pose(i).R;
-    graph_.add_loop(i, current, t_ij, wrap(yaw_of(R_i_vio * R_ij) - yaw_of(R_i_vio)));
+    const double yaw_ij = wrap(yaw_of(R_i_vio * R_ij) - yaw_of(R_i_vio));
+    graph_.add_loop(i, current, t_ij, yaw_ij);
+    loops_.push_back({keyframes_[i].t, keyframes_[current].t, t_ij, yaw_ij, inliers});
     ++stats_.loops;
   }
 }

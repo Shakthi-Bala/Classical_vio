@@ -131,6 +131,7 @@ void apply(const YAML::Node& n, Config& c) {
     read(l, "search_radius", o.search_radius);
     read(l, "max_view_angle", o.max_view_angle);
     read(l, "min_inliers", o.min_inliers);
+    read(l, "max_loop_correction", o.max_loop_correction);
     read(l, "pnp_px", o.pnp_px);
   }
 

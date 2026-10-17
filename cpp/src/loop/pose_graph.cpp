@@ -8,9 +8,12 @@ namespace msckf::loop {
 
 namespace {
 
-// Loop edges get a robust loss (meters / radians), sequential edges none,
-// as in VINS-Fusion.
-constexpr double kLoopHuber = 0.1;
+// Residual standard deviations: a VIO relative pose over a few keyframes
+// (~1 m) is good to ~1-2 cm, a loop edge from PnP to a few cm with outliers.
+// Loop residuals (whitened) also get a robust loss, quadratic up to 3 sigma.
+constexpr double kSeqSigmaT = 0.02, kSeqSigmaYaw = 0.01;     // [m], [rad]
+constexpr double kLoopSigmaT = 0.05, kLoopSigmaYaw = 0.02;
+constexpr double kLoopHuber = 3.0;                            // [sigma]
 
 template <typename T>
 T normalize_angle(const T& a) {
@@ -32,8 +35,10 @@ Eigen::Matrix<T, 3, 3> ypr_to_rotation_t(const T& yaw, const T& pitch, const T& 
 
 // Relative position of j in i's frame and relative yaw, against a measurement.
 struct FourDofError {
-  FourDofError(const Eigen::Vector3d& t_ij, double yaw_ij, double pitch_i, double roll_i)
-      : t_ij(t_ij), yaw_ij(yaw_ij), pitch_i(pitch_i), roll_i(roll_i) {}
+  FourDofError(const Eigen::Vector3d& t_ij, double yaw_ij, double pitch_i, double roll_i,
+               double sigma_t, double sigma_yaw)
+      : t_ij(t_ij), yaw_ij(yaw_ij), pitch_i(pitch_i), roll_i(roll_i),
+        w_t(1.0 / sigma_t), w_yaw(1.0 / sigma_yaw) {}
 
   template <typename T>
   bool operator()(const T* yaw_i, const T* p_i, const T* yaw_j, const T* p_j, T* r) const {
@@ -41,14 +46,14 @@ struct FourDofError {
     const Eigen::Matrix<T, 3, 1> dp(p_j[0] - p_i[0], p_j[1] - p_i[1], p_j[2] - p_i[2]);
     const Eigen::Matrix<T, 3, 1> t_est = R_w_i.transpose() * dp;
     for (int k = 0; k < 3; ++k) {
-      r[k] = t_est(k) - T(t_ij(k));
+      r[k] = T(w_t) * (t_est(k) - T(t_ij(k)));
     }
-    r[3] = normalize_angle(yaw_j[0] - yaw_i[0] - T(yaw_ij));
+    r[3] = T(w_yaw) * normalize_angle(yaw_j[0] - yaw_i[0] - T(yaw_ij));
     return true;
   }
 
   Eigen::Vector3d t_ij;
-  double yaw_ij, pitch_i, roll_i;
+  double yaw_ij, pitch_i, roll_i, w_t, w_yaw;
 };
 
 }  // namespace
@@ -107,7 +112,8 @@ void PoseGraph::optimize(int max_iterations) {
     Node& a = nodes_[e.i];
     Node& b = nodes_[e.j];
     auto* cost = new ceres::AutoDiffCostFunction<FourDofError, 4, 1, 3, 1, 3>(
-        new FourDofError(e.t_ij, e.yaw_ij, a.pitch, a.roll));
+        new FourDofError(e.t_ij, e.yaw_ij, a.pitch, a.roll, e.loop ? kLoopSigmaT : kSeqSigmaT,
+                         e.loop ? kLoopSigmaYaw : kSeqSigmaYaw));
     problem.AddResidualBlock(cost, e.loop ? &huber : nullptr, a.yaw, a.p, b.yaw, b.p);
   }
   problem.SetParameterBlockConstant(nodes_[0].yaw);

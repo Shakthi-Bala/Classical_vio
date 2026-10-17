@@ -37,6 +37,16 @@ class LoopClosure {
   // Every processed frame corrected with the final pose graph.
   std::vector<std::pair<double, Isometry3d>> final_trajectory() const;
 
+  // One accepted loop: keyframe times, the measured pose of the current
+  // keyframe in the candidate's body frame, and the PnP inliers.
+  struct Loop {
+    double t_candidate, t_current;
+    Eigen::Vector3d t_ij;
+    double yaw_ij;
+    int inliers;
+  };
+  const std::vector<Loop>& loops() const { return loops_; }
+
   struct Stats {
     long keyframes = 0;
     long candidates = 0;   // PnP attempts
@@ -58,7 +68,7 @@ class LoopClosure {
   // Relative pose of the current camera to the candidate's camera, from PnP:
   // x_cur = R x_cand + t. False if not enough inliers.
   bool verify(const KeyFrame& candidate, const KeyFrame& current, Eigen::Matrix3d& R,
-              Eigen::Vector3d& t) const;
+              Eigen::Vector3d& t, int& inliers) const;
   void try_loops(int current);
   // drift_ that makes keyframe's VIO pose its corrected pose.
   Isometry3d drift_at(int keyframe) const;
@@ -81,6 +91,7 @@ class LoopClosure {
     int keyframe;   // newest keyframe at or before this frame
   };
   std::vector<Frame> frames_;
+  std::vector<Loop> loops_;
   Stats stats_;
 };
 

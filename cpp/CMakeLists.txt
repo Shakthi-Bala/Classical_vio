@@ -66,6 +66,7 @@ if(MSCKF_BUILD_TESTS)
     test/test_feature.cpp
     test/test_swo.cpp
     test/test_backends.cpp
+    test/test_loop.cpp
   )
   target_link_libraries(msckf_tests PRIVATE msckf GTest::gtest_main)
   include(GoogleTest)
