@@ -22,9 +22,12 @@ OFFSETS_CSV = 'config/euroc_offsets.csv'
 
 
 def load_gt(seq_path):
-    """(t [s], position [N,3], quaternion w x y z [N,4]) of a EuRoC sequence."""
-    d = np.loadtxt(os.path.join(seq_path, 'mav0/state_groundtruth_estimate0/data.csv'),
-                   delimiter=',', comments='#')
+    """(t [s], position [N,3], quaternion w x y z [N,4]) of a EuRoC sequence,
+    or of a TUM-VI one in EuRoC format (motion capture in mav0/mocap0)."""
+    path = os.path.join(seq_path, 'mav0/state_groundtruth_estimate0/data.csv')
+    if not os.path.exists(path):
+        path = os.path.join(seq_path, 'mav0/mocap0/data.csv')
+    d = np.loadtxt(path, delimiter=',', comments='#')
     return d[:, 0] * 1e-9, d[:, 1:4], d[:, 4:8]
 
 

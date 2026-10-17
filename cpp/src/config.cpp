@@ -72,6 +72,7 @@ void apply(const YAML::Node& n, Config& c) {
   read(n, "pyramid_levels", c.pyramid_levels);
   read(n, "patch_size", c.patch_size);
   read(n, "mono_features", c.mono_features);
+  read(n, "mono_prune_first", c.mono_prune_first);
 
   read(n, "gravity_acc", c.gravity_acc);
   read(n, "max_cam_state_size", c.max_cam_state_size);

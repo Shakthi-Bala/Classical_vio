@@ -1,15 +1,20 @@
-# Builds the C++ VIO (cpp/) and runs its unit tests.
+# Builds the C++ VIO (cpp/) and runs its unit tests on x86-64 and arm64
+# (the Jetson's architecture), and checks that the Docker image builds.
 name: cpp
 
 on:
   push:
-    paths: ['cpp/**', '.github/workflows/cpp.yml']
+    paths: ['cpp/**', '.github/workflows/cpp.yml', '.dockerignore']
   pull_request:
-    paths: ['cpp/**', '.github/workflows/cpp.yml']
+    paths: ['cpp/**', '.github/workflows/cpp.yml', '.dockerignore']
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,3 +34,10 @@ jobs:
 
       - name: Test
         run: ctest --test-dir cpp/build --output-on-failure
+
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image (runs the tests inside)
+        run: docker build -t classical-vio -f cpp/Dockerfile .

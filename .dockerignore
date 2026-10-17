@@ -1,0 +1,5 @@
+# Only cpp/ sources are needed; results and local builds are large.
+*
+!cpp
+cpp/build*
+cpp/results

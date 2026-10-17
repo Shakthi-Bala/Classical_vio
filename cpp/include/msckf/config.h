@@ -92,6 +92,9 @@ struct Config {
   // (cam1 coordinates NaN), like VINS-Fusion's front end. Off = msckf_vio and
   // the Python, which drop every feature without a stereo match.
   bool mono_features = false;
+  // When a grid cell has too many features, drop cam0-only ones before stereo
+  // ones (otherwise only track length decides).
+  bool mono_prune_first = false;
 
   // MSCKF.
   double gravity_acc = 9.81;

@@ -21,6 +21,7 @@ track_precision: 0.01      # LK epsilon
 pyramid_levels: 3
 patch_size: 15
 mono_features: false   # keep cam0 features without a stereo match
+mono_prune_first: false   # full grid cell: drop cam0-only features first
 
 # MSCKF
 gravity_acc: 9.81

@@ -400,8 +400,15 @@ void ImageProcessor::prune_features() {
     if (static_cast<int>(features.size()) <= config_.grid_max_feature_num) {
       continue;
     }
+    // With mono_prune_first, cam0-only features go before stereo ones.
+    const bool stereo_first = config_.mono_prune_first;
     std::stable_sort(features.begin(), features.end(),
-                     [](const FeatureMetaData& a, const FeatureMetaData& b) {
+                     [stereo_first](const FeatureMetaData& a, const FeatureMetaData& b) {
+                       const bool a_stereo = !std::isnan(a.cam1_point.x);
+                       const bool b_stereo = !std::isnan(b.cam1_point.x);
+                       if (stereo_first && a_stereo != b_stereo) {
+                         return a_stereo;
+                       }
                        return a.lifetime > b.lifetime;
                      });
     features.resize(config_.grid_max_feature_num);
