@@ -6,7 +6,7 @@ plots and how to reproduce them are in [README.md](README.md).
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Faithful C++17/Eigen port of the Python stereo MSCKF in [`../Code`](../Code), verified module by module, offline on EuRoC MH_01_easy | done |
-| 2 | Profiling, quirk ablation on all 11 EuRoC sequences, Ceres sliding-window back end, ROS 2 node, VINS-Fusion baseline (all offline on EuRoC or EuRoC bag playback) | done |
+| 2 | Profiling, quirk ablation on all 11 EuRoC sequences, Ceres sliding-window back end, cam0-only features, ROS 2 node, VINS-Fusion baseline, CI (all offline on EuRoC or EuRoC bag playback) | done |
 | 3 | Live RealSense, Jetson / onboard the PeAR drone: real-time factor, latency and power on the embedded board | not started |
 
 ## Baseline
@@ -27,7 +27,7 @@ Each milestone ends with a comparison against the Python.
 | M1 | `math_utils` | `Code/test/utils_test.py` ported to gtest | done |
 | M2 | Config and EuRoC reader | same start time and frames after the 40 s offset as the Python | done (implied by M5) |
 | M3 | `Feature::initialize_position` | `Code/test/feature_initialization_test.py` ported to gtest | done |
-| M4 | MSCKF back end fed with the Python features | trajectory equal to the Python's | done: 1e-9 m on all 2862 poses (end to end, no separate `process_model` / `measurement_update` tests) |
+| M4 | MSCKF back end fed with the Python features | trajectory equal to the Python's | done: 1e-9 m on all 2862 poses; the back end is also tested on a synthetic trajectory (`test/test_backends.cpp`) |
 | M5 | Front end | features equal to the Python's | done: identical on all 2882 frames |
 | M6 | End to end | ATE, per-frame latency, real-time factor | done: 0.1284 m vs 0.1289 m, see README |
 
@@ -70,6 +70,10 @@ These were written down before the port. All of them came up.
 - **ROS 2 Humble via RoboStack** (conda, no root on the cluster). Stereo pairing and
   IMU ordering are done in the node rather than with `message_filters`, so live playback
   processes data in the same order as the offline replay.
+- **Cam0-only features.** V2_03 showed that dropping every feature without a stereo match
+  (the msckf_vio design) leaves the back ends blind for seconds when one camera blurs.
+  Both back ends now accept cam0-only observations (`mono_features`), off by default so
+  the Python-parity build is unchanged.
 - **VINS-Fusion** from the zinuok ROS 2 port, stereo + IMU, loop closure off, scored with
   the same evaluation code on the same time span.
 

@@ -1,10 +1,12 @@
 """
 Final comparison on all EuRoC sequences: Python MSCKF, C++ MSCKF (Python
-behaviour), C++ MSCKF with the quirk fixes, C++ sliding window, VINS-Fusion.
+behaviour), C++ MSCKF and C++ sliding window (config/euroc_mono.yaml),
+VINS-Fusion; plus the C++ back ends without cam0-only features
+(config/euroc_fixed.yaml).
 
 Usage (from cpp/): python scripts/final_report.py [--vins PATTERN_WITH_{seq}]
-Writes, in results/final/: ate_table.csv, rpe_table.csv, summary.md (both
-tables), ate_per_sequence.png and traj_<SEQ>.png (--traj-seq).
+Writes, in results/final/: ate_table.csv, rpe_table.csv, summary.md (tables),
+ate_per_sequence.png and traj_<SEQ>.png (--traj-seq).
 """
 import argparse
 import csv
@@ -19,12 +21,14 @@ import plotstyle as ps
 import vio_eval as ve
 
 OUT = 'results/final'
-COLUMNS = ['Python', 'MSCKF = Python', 'MSCKF fixed', 'SWO', 'VINS-Fusion']
+COLUMNS = ['Python', 'MSCKF = Python', 'MSCKF', 'SWO', 'VINS-Fusion']
+MONO_COLUMNS = ['MSCKF stereo only', 'MSCKF', 'SWO stereo only', 'SWO']
+ALL_COLUMNS = COLUMNS + ['MSCKF stereo only', 'SWO stereo only']
 # Plotted series: (column, label, colour, marker). Marker shapes are the
 # secondary encoding the two low-contrast palette slots need.
 SERIES = [
     ('Python', 'Python MSCKF', ps.PYTHON, 'o'),
-    ('MSCKF fixed', 'C++ MSCKF (quirks fixed)', ps.CPP_MSCKF, 's'),
+    ('MSCKF', 'C++ MSCKF', ps.CPP_MSCKF, 's'),
     ('SWO', 'C++ sliding window (Ceres)', ps.CPP_SWO, 'D'),
     ('VINS-Fusion', 'VINS-Fusion (no loop)', ps.VINS, '^'),
 ]
@@ -34,9 +38,11 @@ def trajectory_paths(seq, vins_pattern):
     return {
         'Python': ve.python_trajectory(seq),
         'MSCKF = Python': f'results/ablation/{seq}/baseline/traj_cpp.txt',
-        'MSCKF fixed': f'results/backends/msckf/{seq}/traj_cpp.txt',
-        'SWO': f'results/backends/swo/{seq}/traj_cpp.txt',
+        'MSCKF': f'results/backends/msckf_mono/{seq}/traj_cpp.txt',
+        'SWO': f'results/backends/swo_mono/{seq}/traj_cpp.txt',
         'VINS-Fusion': vins_pattern.format(seq=seq),
+        'MSCKF stereo only': f'results/backends/msckf/{seq}/traj_cpp.txt',
+        'SWO stereo only': f'results/backends/swo/{seq}/traj_cpp.txt',
     }
 
 
@@ -56,46 +62,65 @@ def score(vins_pattern):
     return table
 
 
-def common_sequences(table):
+def common_sequences(table, columns):
     """Sequences every column completed: the fair set for means."""
-    return [seq for seq, row in table.items() if not any(ve.failed(row[c][0]) for c in COLUMNS)]
+    return [seq for seq, row in table.items() if not any(ve.failed(row[c][0]) for c in columns)]
 
 
-def write_tables(table):
-    common = common_sequences(table)
-    with open(f'{OUT}/ate_table.csv', 'w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['sequence'] + COLUMNS)
-        for seq, row in table.items():
-            w.writerow([seq] + ['' if ve.failed(row[c][0]) else f'{row[c][0]:.4f}' for c in COLUMNS])
-    with open(f'{OUT}/rpe_table.csv', 'w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['sequence'] + [f'{c} trans%' for c in COLUMNS] + [f'{c} rot_deg' for c in COLUMNS])
-        for seq, row in table.items():
-            rp = [row[c][1] for c in COLUMNS]
-            w.writerow([seq] + ['' if v is None else f'{v[0]:.3f}' for v in rp] +
-                       ['' if v is None else f'{v[1]:.3f}' for v in rp])
-
-    def ate_cell(a):
+def ate_lines(table, columns):
+    """Markdown ATE table: per sequence, failures, the mean over the sequences
+    all columns complete and, for columns without failures, over all."""
+    def cell(a):
         return 'fail' if a is None else ('div.' if a > ve.DIVERGED_M else f'{a:.3f}')
 
-    head = '|---' * (len(COLUMNS) + 1) + '|'
-    lines = ['| ATE RMSE [m] | ' + ' | '.join(COLUMNS) + ' |', head]
+    common = common_sequences(table, columns)
+    lines = ['| ATE RMSE [m] | ' + ' | '.join(columns) + ' |', '|---' * (len(columns) + 1) + '|']
     for seq, row in table.items():
-        lines.append(f'| {seq} | ' + ' | '.join(ate_cell(row[c][0]) for c in COLUMNS) + ' |')
+        lines.append(f'| {seq} | ' + ' | '.join(cell(row[c][0]) for c in columns) + ' |')
     lines.append('| failures | ' + ' | '.join(
-        str(sum(ve.failed(row[c][0]) for row in table.values())) for c in COLUMNS) + ' |')
+        str(sum(ve.failed(row[c][0]) for row in table.values())) for c in columns) + ' |')
     lines.append(f'| mean, {len(common)} seq. all completed | ' + ' | '.join(
-        f'{np.mean([table[s][c][0] for s in common]):.3f}' for c in COLUMNS) + ' |')
+        f'{np.mean([table[s][c][0] for s in common]):.3f}' for c in columns) + ' |')
+    if len(common) < len(table):
+        lines.append(f'| mean, all {len(table)} seq. | ' + ' | '.join(
+            '-' if any(ve.failed(row[c][0]) for row in table.values())
+            else f'{np.mean([row[c][0] for row in table.values()]):.3f}' for c in columns) + ' |')
+    return lines
 
-    lines += ['', f'| RPE @ {ve.RPE_LENGTH_M:.0f} m [% / deg] | ' + ' | '.join(COLUMNS) + ' |', head]
+
+def rpe_lines(table, columns):
+    common = common_sequences(table, columns)
+    lines = [f'| RPE @ {ve.RPE_LENGTH_M:.0f} m [% / deg] | ' + ' | '.join(columns) + ' |',
+             '|---' * (len(columns) + 1) + '|']
     for seq, row in table.items():
         lines.append(f'| {seq} | ' + ' | '.join(
             'fail' if row[c][1] is None else f'{row[c][1][0]:.2f} / {row[c][1][1]:.2f}'
-            for c in COLUMNS) + ' |')
+            for c in columns) + ' |')
     lines.append(f'| mean, {len(common)} seq. all completed | ' + ' | '.join(
         f'{np.mean([table[s][c][1][0] for s in common]):.2f} / '
-        f'{np.mean([table[s][c][1][1] for s in common]):.2f}' for c in COLUMNS) + ' |')
+        f'{np.mean([table[s][c][1][1] for s in common]):.2f}' for c in columns) + ' |')
+    return lines
+
+
+def write_tables(table):
+    with open(f'{OUT}/ate_table.csv', 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['sequence'] + ALL_COLUMNS)
+        for seq, row in table.items():
+            w.writerow([seq] + ['' if ve.failed(row[c][0]) else f'{row[c][0]:.4f}'
+                                for c in ALL_COLUMNS])
+    with open(f'{OUT}/rpe_table.csv', 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['sequence'] + [f'{c} trans%' for c in ALL_COLUMNS] +
+                   [f'{c} rot_deg' for c in ALL_COLUMNS])
+        for seq, row in table.items():
+            rp = [row[c][1] for c in ALL_COLUMNS]
+            w.writerow([seq] + ['' if v is None else f'{v[0]:.3f}' for v in rp] +
+                       ['' if v is None else f'{v[1]:.3f}' for v in rp])
+
+    lines = (ate_lines(table, COLUMNS) + [''] + rpe_lines(table, COLUMNS) + ['', 'Cam0-only '
+             '(mono) features, config/euroc_mono.yaml vs config/euroc_fixed.yaml:', ''] +
+             ate_lines(table, MONO_COLUMNS))
     with open(f'{OUT}/summary.md', 'w') as f:
         f.write('\n'.join(lines) + '\n')
     return lines
@@ -135,7 +160,7 @@ def plot_trajectory(seq, seq_path):
     gt = ve.load_gt(seq_path)
     labels = {c: l for c, l, _, _ in SERIES}
     fig, ax = plt.subplots(figsize=(6.5, 5.5), dpi=150)
-    for i, (col, color) in enumerate([('MSCKF fixed', ps.CPP_MSCKF), ('SWO', ps.CPP_SWO)]):
+    for i, (col, color) in enumerate([('MSCKF', ps.CPP_MSCKF), ('SWO', ps.CPP_SWO)]):
         traj = ve.load_tum(trajectory_paths(seq, '')[col], gt)
         p, g = ve.align(traj, gt)
         if i == 0:

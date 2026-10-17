@@ -6,6 +6,7 @@ parity checks (front-end features, back end on a replayed feature file).
 Usage (from cpp/, in the `cv` env, after run_python_reference.py and main_euroc):
   python scripts/compare.py --seq /path/to/MH_01_easy
 
+Timing: run scripts/run_timing_job.sh first (results/timing/).
 Writes results/summary.md, results/trajectory_xy.png, results/latency.png and,
 per run, results/<run>/plots/ (Code/evaluate.py's full plot set).
 """
@@ -24,11 +25,13 @@ import plotstyle as ps
 import vio_eval as ve
 from evaluate import generate_all_plots
 
+# Timing comes from scripts/run_timing_job.sh: all methods one after the other
+# on one compute node, nothing else running.
 RUNS = {   # label: (trajectory, timing csv, plots dir, colour)
-    'Python': ('results/python/traj_python.txt', 'results/python/timing_python.csv',
+    'Python': ('results/python/traj_python.txt', 'results/timing/python/timing_python.csv',
                'results/python/plots', ps.PYTHON),
-    'C++': ('results/cpp/traj_cpp.txt', 'results/cpp/timing_cpp.csv', 'results/cpp/plots',
-            ps.CPP_MSCKF),
+    'C++': ('results/cpp/traj_cpp.txt', 'results/timing/cpp_python_behaviour/timing_cpp.csv',
+            'results/cpp/plots', ps.CPP_MSCKF),
 }
 FEATURE_TOLERANCE = 1e-6   # normalized coordinates
 
@@ -139,7 +142,8 @@ def main():
     lines = [
         '# Python vs C++ stereo MSCKF on EuRoC MH_01_easy',
         '',
-        f'Start offset {args.offset:g} s, deterministic replay (no threads), same compute node.',
+        f'Start offset {args.offset:g} s, deterministic replay (no threads). Timing: one core, '
+        f'same compute node ({open("results/timing/node.txt").read().split(".")[0].strip()}).',
         '',
         '| | Python | C++ |',
         '|---|---|---|',

@@ -20,6 +20,7 @@ max_iteration: 30          # LK iterations
 track_precision: 0.01      # LK epsilon
 pyramid_levels: 3
 patch_size: 15
+mono_features: false   # keep cam0 features without a stereo match
 
 # MSCKF
 gravity_acc: 9.81
@@ -28,6 +29,7 @@ position_std_threshold: 8.0   # online reset above this [m]
 rotation_threshold: 0.2618    # keyframe pruning [rad] (15 deg)
 translation_threshold: 0.4    # keyframe pruning [m]
 tracking_rate_threshold: 0.5
+mono_min_baseline: 0.2   # [m] motion before a cam0-only feature is triangulated
 
 # Noise, given as standard deviations (squared on load, like config.py)
 gyro_noise_std: 0.005

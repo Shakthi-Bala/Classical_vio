@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/video/tracking.hpp>
@@ -13,12 +14,18 @@ namespace msckf {
 
 namespace {
 
+// cam1 point of a cam0-only feature (Config::mono_features).
+const cv::Point2f kNoCam1Point(std::numeric_limits<float>::quiet_NaN(),
+                               std::numeric_limits<float>::quiet_NaN());
+
 // Constants of image.py.
 constexpr double kImuBeforePrevImage = 0.01;    // [s] gyro window starts this early ...
 constexpr double kImuBeforeCurrImage = 0.004;   // [s] ... and ends this early
 constexpr float kMaxLeftRightError = 3.0f;      // [px] cam0 -> cam1 -> cam0 round trip
 constexpr double kMaxVerticalDisparity = 20.0;  // [px] tracked vs predicted cam1 row
 constexpr int kMaskRadius = 3;                  // [px] no new detection this close to a feature
+// [px] round trip of a cam0-only track, current -> previous image (mono_features).
+constexpr float kMaxMonoTrackBackError = 1.0f;
 
 cv::Matx33d to_cv(const Eigen::Matrix3d& m) {
   cv::Matx33d out;
@@ -217,20 +224,27 @@ void ImageProcessor::add_stereo_features(const std::vector<cv::KeyPoint>& keypoi
   stereo_match(cam0_points, cam1_points, inlier_markers);
 
   GridFeatures grid_new_features(config_.grid_num());
+  GridFeatures grid_new_mono_features(config_.grid_num());
   for (size_t i = 0; i < inlier_markers.size(); ++i) {
-    if (!inlier_markers[i]) {
+    if (!inlier_markers[i] && !config_.mono_features) {
       continue;
     }
     FeatureMetaData f;
     f.response = keypoints[i].response;
     f.cam0_point = cv::Point2f(cam0_points[i]);
-    f.cam1_point = cam1_points[i];
-    grid_new_features[grid_cell(f.cam0_point)].push_back(f);
+    f.cam1_point = inlier_markers[i] ? cam1_points[i] : kNoCam1Point;
+    (inlier_markers[i] ? grid_new_features : grid_new_mono_features)[grid_cell(f.cam0_point)]
+        .push_back(f);
   }
 
   for (int i = 0; i < config_.grid_num(); ++i) {
+    // Stereo features first; cam0-only ones (mono_features) fill up the cell.
     std::vector<FeatureMetaData>& features = grid_new_features[i];
     std::stable_sort(features.begin(), features.end(), stronger<FeatureMetaData>);
+    std::vector<FeatureMetaData>& mono = grid_new_mono_features[i];
+    std::stable_sort(mono.begin(), mono.end(), stronger<FeatureMetaData>);
+    features.insert(features.end(), mono.begin(), mono.end());
+
     const size_t n = std::min<size_t>(features.size(), config_.grid_min_feature_num);
     for (size_t k = 0; k < n; ++k) {
       FeatureMetaData f = features[k];
@@ -296,6 +310,42 @@ void ImageProcessor::track_features() {
     f.lifetime = prev_matched_lifetime[i] + 1;
     f.cam0_point = curr_matched_cam0_points[i];
     f.cam1_point = curr_matched_cam1_points[i];
+    curr_features_[grid_cell(f.cam0_point)].push_back(f);
+  }
+  if (!config_.mono_features) {
+    return;
+  }
+  // Tracked in cam0 but no stereo match: keep as a cam0-only feature if it
+  // tracks back to where it came from (it has no stereo check to catch a bad
+  // track).
+  std::vector<cv::Point2f> mono_curr, mono_back;
+  std::vector<size_t> mono_idx;
+  for (size_t i = 0; i < curr_tracked_cam0_points.size(); ++i) {
+    if (!match_inliers[i]) {
+      mono_idx.push_back(i);
+      mono_curr.push_back(curr_tracked_cam0_points[i]);
+    }
+  }
+  if (mono_idx.empty()) {
+    return;
+  }
+  const auto prev_tracked_cam0_points = select(prev_cam0_points, track_inliers);
+  for (const size_t i : mono_idx) {
+    mono_back.push_back(prev_tracked_cam0_points[i]);
+  }
+  std::vector<unsigned char> back_status;
+  lk(curr_cam0_pyramid_, prev_cam0_pyramid_, mono_curr, mono_back, back_status);
+  for (size_t k = 0; k < mono_idx.size(); ++k) {
+    const size_t i = mono_idx[k];
+    const cv::Point2f d = mono_back[k] - prev_tracked_cam0_points[i];
+    if (!back_status[k] || std::hypot(d.x, d.y) > kMaxMonoTrackBackError) {
+      continue;
+    }
+    FeatureMetaData f;
+    f.id = prev_tracked_ids[i];
+    f.lifetime = prev_tracked_lifetime[i] + 1;
+    f.cam0_point = curr_tracked_cam0_points[i];
+    f.cam1_point = kNoCam1Point;
     curr_features_[grid_cell(f.cam0_point)].push_back(f);
   }
 }
@@ -389,7 +439,22 @@ FeatureMsg ImageProcessor::publish() const {
   const bool full = config_.fixes.full_precision_publish;
   const std::vector<cv::Point2d> cam0_und =
       undistort_as(has_new_feature || full, cam0_points, config_.cam0);
-  const std::vector<cv::Point2d> cam1_und = undistort_as(full, cam1_points, config_.cam1);
+  // cam0-only features (mono_features) have no cam1 point to undistort.
+  std::vector<size_t> stereo_idx;
+  std::vector<cv::Point2f> stereo_cam1_points;
+  for (size_t i = 0; i < cam1_points.size(); ++i) {
+    if (!std::isnan(cam1_points[i].x)) {
+      stereo_idx.push_back(i);
+      stereo_cam1_points.push_back(cam1_points[i]);
+    }
+  }
+  const std::vector<cv::Point2d> stereo_cam1_und =
+      undistort_as(full, stereo_cam1_points, config_.cam1);
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  std::vector<cv::Point2d> cam1_und(cam1_points.size(), cv::Point2d(nan, nan));
+  for (size_t k = 0; k < stereo_idx.size(); ++k) {
+    cam1_und[stereo_idx[k]] = stereo_cam1_und[k];
+  }
 
   FeatureMsg msg;
   msg.timestamp = curr_timestamp_;

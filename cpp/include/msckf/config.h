@@ -88,6 +88,10 @@ struct Config {
   double track_precision = 0.01;  // KLT
   int pyramid_levels = 3;
   int patch_size = 15;
+  // Keep cam0 features whose stereo match fails, as cam0-only observations
+  // (cam1 coordinates NaN), like VINS-Fusion's front end. Off = msckf_vio and
+  // the Python, which drop every feature without a stereo match.
+  bool mono_features = false;
 
   // MSCKF.
   double gravity_acc = 9.81;
@@ -96,6 +100,9 @@ struct Config {
   double rotation_threshold = 0.2618;    // keyframe pruning [rad] (15 deg)
   double translation_threshold = 0.4;    // keyframe pruning [m]
   double tracking_rate_threshold = 0.5;
+  // A feature seen only by cam0 (mono_features) is triangulated once the camera
+  // moved this far perpendicular to its ray [m]; stereo features need no motion.
+  double mono_min_baseline = 0.2;
 
   // Noise (variances, not standard deviations).
   double gyro_noise = 0.005 * 0.005;

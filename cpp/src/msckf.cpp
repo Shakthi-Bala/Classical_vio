@@ -28,6 +28,20 @@ std::vector<StateID> observed_in(const Feature& feature, const std::vector<State
   return out;
 }
 
+// Rows an observation adds to a feature's stacked Jacobian: 4 for a stereo
+// observation, 2 for a cam0-only one (Config::mono_features).
+Eigen::Index observation_rows(const Eigen::Vector4d& z) { return is_stereo(z) ? 4 : 2; }
+
+// Rows of the feature's Jacobian over the states in `ids` after the
+// null-space projection removes the 3 feature-position directions.
+Eigen::Index projected_rows(const Feature& feature, const std::vector<StateID>& ids) {
+  Eigen::Index rows = 0;
+  for (const StateID id : ids) {
+    rows += observation_rows(feature.observations.at(id));
+  }
+  return rows - 3;
+}
+
 }  // namespace
 
 MSCKF::MSCKF(const Config& config) : config_(config) {
@@ -388,7 +402,7 @@ void MSCKF::feature_jacobian(FeatureID feature_id, const std::vector<StateID>& c
 
   const std::vector<StateID> valid_cam_state_ids = observed_in(feature, cam_state_ids);
 
-  const Eigen::Index rows = 4 * static_cast<Eigen::Index>(valid_cam_state_ids.size());
+  const Eigen::Index rows = projected_rows(feature, valid_cam_state_ids) + 3;
   const Eigen::Index cols = 21 + 6 * static_cast<Eigen::Index>(state_server_.cam_states.size());
   Eigen::MatrixXd H_xj = Eigen::MatrixXd::Zero(rows, cols);
   Eigen::MatrixXd H_fj = Eigen::MatrixXd::Zero(rows, 3);
@@ -401,11 +415,13 @@ void MSCKF::feature_jacobian(FeatureID feature_id, const std::vector<StateID>& c
     Eigen::Vector4d r_i;
     measurement_jacobian(cam_id, feature.id, H_xi, H_fi, r_i);
 
+    // A cam0-only observation uses the first two (cam0) rows.
+    const Eigen::Index n = observation_rows(feature.observations.at(cam_id));
     const int idx = cam_state_index(cam_id);
-    H_xj.block<4, 6>(stack_count, 21 + 6 * idx) = H_xi;
-    H_fj.block<4, 3>(stack_count, 0) = H_fi;
-    r_j.segment<4>(stack_count) = r_i;
-    stack_count += 4;
+    H_xj.block(stack_count, 21 + 6 * idx, n, 6) = H_xi.topRows(n);
+    H_fj.block(stack_count, 0, n, 3) = H_fi.topRows(n);
+    r_j.segment(stack_count, n) = r_i.head(n);
+    stack_count += n;
   }
 
   // Left null space of H_fj: the last (rows - 3) columns of U.
@@ -505,6 +521,15 @@ bool MSCKF::gating_test(const Eigen::MatrixXd& H, const Eigen::VectorXd& r, int 
   return gamma < chi_squared_test_table_.at(dof);
 }
 
+bool MSCKF::enough_motion(const Feature& feature) const {
+  if (!feature.check_motion(state_server_.cam_states)) {
+    return false;
+  }
+  // Without a stereo observation the depth comes from the motion alone.
+  return feature.has_stereo_observation() ||
+         feature.check_motion(state_server_.cam_states, config_.mono_min_baseline);
+}
+
 void MSCKF::remove_lost_features() {
   MSCKF_PROFILE("backend/remove_lost_features");
   Eigen::Index jacobian_row_size = 0;
@@ -521,7 +546,7 @@ void MSCKF::remove_lost_features() {
       continue;
     }
     if (!feature.is_initialized) {
-      if (!feature.check_motion(state_server_.cam_states)) {
+      if (!enough_motion(feature)) {
         invalid_feature_ids.push_back(feature_id);
         continue;
       }
@@ -530,7 +555,11 @@ void MSCKF::remove_lost_features() {
         continue;
       }
     }
-    jacobian_row_size += 4 * static_cast<Eigen::Index>(feature.observations.size()) - 3;
+    std::vector<StateID> cam_state_ids;
+    for (const auto& [cam_id, measurement] : feature.observations) {
+      cam_state_ids.push_back(cam_id);
+    }
+    jacobian_row_size += projected_rows(feature, cam_state_ids);
     processed_feature_ids.push_back(feature_id);
   }
 
@@ -634,15 +663,14 @@ void MSCKF::prune_cam_state_buffer() {
       continue;
     }
     if (!feature.is_initialized) {
-      if (!feature.check_motion(state_server_.cam_states) ||
-          !feature.initialize_position(state_server_.cam_states)) {
+      if (!enough_motion(feature) || !feature.initialize_position(state_server_.cam_states)) {
         for (const StateID cam_id : involved_cam_state_ids) {
           feature.observations.erase(cam_id);
         }
         continue;
       }
     }
-    jacobian_row_size += 4 * static_cast<Eigen::Index>(involved_cam_state_ids.size()) - 3;
+    jacobian_row_size += projected_rows(feature, involved_cam_state_ids);
   }
 
   // Pass 2: stack the Jacobians.

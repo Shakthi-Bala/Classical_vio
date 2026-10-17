@@ -1,0 +1,5 @@
+# euroc_fixed.yaml plus cam0-only features: a feature that has no stereo match
+# is kept and used by both back ends (README "Mono features").
+base: euroc_fixed.yaml
+
+mono_features: true

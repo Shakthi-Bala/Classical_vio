@@ -41,8 +41,13 @@ class Feature {
                                          const Eigen::Vector2d& z1,
                                          const Eigen::Vector2d& z2) const;
 
-  // True if the camera moved enough (perpendicular to the ray) to triangulate.
+  // True if the camera moved enough (perpendicular to the ray) to triangulate:
+  // more than optimization_config.translation_threshold, or `threshold`.
   bool check_motion(const CamStateServer& cam_states) const;
+  bool check_motion(const CamStateServer& cam_states, double threshold) const;
+
+  // True if at least one observation has its cam1 part (Config::mono_features).
+  bool has_stereo_observation() const;
 
   // Levenberg-Marquardt triangulation; sets `position` (world frame) and
   // `is_initialized`. Returns true if the point is in front of every camera.

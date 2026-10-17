@@ -19,8 +19,8 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   "$PY" scripts/run_python_reference.py --path "$DATA" --out "$OUT/python" > "$OUT/python.log" 2>&1
 "$BUILD/main_euroc" --path "$DATA" --threads 1 --out "$OUT/cpp_python_behaviour" \
     > "$OUT/cpp_python_behaviour.log" 2>&1
-"$BUILD/main_euroc" --path "$DATA" --threads 1 --config config/euroc_fixed.yaml \
-    --out "$OUT/cpp_msckf_fixed" > "$OUT/cpp_msckf_fixed.log" 2>&1
-"$BUILD/main_euroc" --path "$DATA" --threads 1 --config config/euroc_fixed.yaml --backend swo \
+"$BUILD/main_euroc" --path "$DATA" --threads 1 --config config/euroc_mono.yaml \
+    --out "$OUT/cpp_msckf" > "$OUT/cpp_msckf.log" 2>&1
+"$BUILD/main_euroc" --path "$DATA" --threads 1 --config config/euroc_mono.yaml --backend swo \
     --out "$OUT/cpp_swo" > "$OUT/cpp_swo.log" 2>&1
 echo done

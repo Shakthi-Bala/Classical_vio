@@ -1,0 +1,31 @@
+# Builds the C++ VIO (cpp/) and runs its unit tests.
+name: cpp
+
+on:
+  push:
+    paths: ['cpp/**', '.github/workflows/cpp.yml']
+  pull_request:
+    paths: ['cpp/**', '.github/workflows/cpp.yml']
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        # Ubuntu 24.04: Eigen 3.4, OpenCV 4.6, Ceres 2.2, yaml-cpp 0.8, Boost 1.83.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ libeigen3-dev libopencv-dev libceres-dev \
+            libyaml-cpp-dev libboost-dev libgtest-dev
+
+      - name: Configure
+        run: cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build cpp/build
+
+      - name: Test
+        run: ctest --test-dir cpp/build --output-on-failure

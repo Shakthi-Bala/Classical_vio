@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# One EuRoC sequence with one back end and config/euroc_fixed.yaml.
+# One EuRoC sequence with one back end. Output: results/backends/BACKEND/SEQ
+# for config/euroc_fixed.yaml (the default), else
+# results/backends/BACKEND_VARIANT/SEQ for config/euroc_VARIANT.yaml.
 #
-#   sbatch -c 2 scripts/run_backend_job.sh BACKEND SEQ OFFSET SEQ_DIR [BUILD_DIR]
+#   sbatch -c 2 scripts/run_backend_job.sh BACKEND SEQ OFFSET SEQ_DIR [CONFIG] [BUILD_DIR]
 set -euo pipefail
-[[ $# -ge 4 ]] || { echo "usage: $0 msckf|swo SEQ OFFSET SEQ_DIR [BUILD_DIR]" >&2; exit 2; }
-BACKEND=$1; SEQ=$2; OFFSET=$3; DATA=$4; BUILD=${5:-build}
+[[ $# -ge 4 ]] || { echo "usage: $0 msckf|swo SEQ OFFSET SEQ_DIR [CONFIG] [BUILD_DIR]" >&2; exit 2; }
+BACKEND=$1; SEQ=$2; OFFSET=$3; DATA=$4
+CONFIG=${5:-config/euroc_fixed.yaml}; BUILD=${6:-build}
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}"
 source "${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 conda activate vio_cpp
-OUT="results/backends/$BACKEND/$SEQ"
+VARIANT=$(basename "$CONFIG" .yaml); VARIANT=${VARIANT#euroc_}
+NAME=$BACKEND; [[ $VARIANT == fixed ]] || NAME=${BACKEND}_$VARIANT
+OUT="results/backends/$NAME/$SEQ"
 mkdir -p "$OUT"
 "$BUILD/main_euroc" --path "$DATA" --offset "$OFFSET" --threads 1 --backend "$BACKEND" \
-    --config config/euroc_fixed.yaml --out "$OUT" > "$OUT/run.log" 2>&1
+    --config "$CONFIG" --out "$OUT" > "$OUT/run.log" 2>&1
