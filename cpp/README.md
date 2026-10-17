@@ -370,6 +370,8 @@ and is scored on the same time span as ours.
 
 ## Loop closure
 
+![loop closure](results/final/loop_MH_05_difficult.png)
+
 `main_euroc --loop` adds loop closure on top of either back end
 ([`include/msckf/loop/`](include/msckf/loop), [`src/loop/`](src/loop)). It never feeds back
 into the VIO: the VIO trajectory stays byte-identical, and loop closure corrects it.
@@ -438,7 +440,8 @@ How it got there:
   [`results/vins/vins_patches.diff`](results/vins/vins_patches.diff).
 
 Run with `LOOP=1 scripts/run_backend_job.sh ...`; table:
-[`scripts/loop_report.py`](scripts/loop_report.py).
+[`scripts/loop_report.py`](scripts/loop_report.py), figure:
+[`scripts/plot_loop.py`](scripts/plot_loop.py).
 
 ## Second dataset: TUM-VI
 

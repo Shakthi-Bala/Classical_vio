@@ -41,7 +41,7 @@ method completes; the Python crashes on V2_03.*
 </tr>
 <tr>
 <td width="50%" valign="top"><a href="cpp/README.md#cam0-only-features-what-broke-v2_03"><img src="cpp/results/final/v203_tracking.png" width="100%"></a><br><b>Finding the failure on V2_03.</b> cam0 blurs at long exposure, stereo matching drops to zero for seconds; keeping cam0-only tracks fixed it.</td>
-<td width="50%" valign="top"><a href="cpp/README.md#sliding-window-optimizer-ceres-back-end"><img src="cpp/results/final/traj_MH_05_difficult.png" width="100%"></a><br><b>Filter vs optimizer.</b> MSCKF and Ceres sliding window on the same front end, MH_05_difficult.</td>
+<td width="50%" valign="top"><a href="cpp/README.md#loop-closure"><img src="cpp/results/final/loop_MH_05_difficult.png" width="100%"></a><br><b>Loop closure.</b> 4-DoF pose graph with ORB / stereo PnP loop edges: MH_05 from 0.41 to 0.14 m.</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><a href="cpp/README.md#profiling-and-optimization"><img src="cpp/results/profile/stages_before_after.png" width="100%"></a><br><b>Profiling.</b> Stage timers and flame graphs without perf access: 10.4 → 8.1 ms per frame, output unchanged.</td>
