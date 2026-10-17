@@ -7,12 +7,16 @@
 //              [--threads N]   (OpenCV worker threads; default = OpenCV's choice)
 //              [--fix NAME]... (turn on a Python-quirk fix; "all" for every fix)
 //              [--backend msckf|swo]  (filter, or Ceres sliding-window optimizer)
+//              [--loop]  (loop closure on top of the back end)
 //
 // Outputs in --out:
 //   traj_cpp.txt        TUM trajectory: t tx ty tz qx qy qz qw (body in world)
 //   timing_cpp.csv      per-frame front-end / back-end time [ms]
 //   profile_stages.csv  per-stage time (MSCKF_PROFILE scopes)
 //
+// --loop also writes traj_loop.txt (each pose corrected with the loops found
+// so far), traj_loop_final.txt (all poses corrected with the final pose graph)
+// and loop_timing.csv.
 // --dump-features also writes features_cpp.txt (same format as the Python dump)
 // so the two front ends can be compared.
 // --features replays a feature file written by scripts/run_python_reference.py
@@ -36,6 +40,7 @@
 #include "msckf/config.h"
 #include "msckf/dataset.h"
 #include "msckf/image_processor.h"
+#include "msckf/loop/loop_closure.h"
 #include "msckf/msckf.h"
 #include "msckf/profiler.h"
 #include "msckf/swo/sliding_window.h"
@@ -53,6 +58,7 @@ struct Args {
   int threads = -1;
   std::vector<std::string> fixes;
   std::string backend = "msckf";
+  bool loop = false;
 };
 
 Args parse_args(int argc, char** argv) {
@@ -75,6 +81,7 @@ Args parse_args(int argc, char** argv) {
     else if (key == "--threads") a.threads = std::stoi(value());
     else if (key == "--fix") a.fixes.push_back(value());
     else if (key == "--backend") a.backend = value();
+    else if (key == "--loop") a.loop = true;
     else throw std::runtime_error("unknown argument " + key);
   }
   if (a.path.empty()) {
@@ -109,6 +116,15 @@ std::vector<msckf::FeatureMsg> read_feature_file(const std::string& file) {
     msgs.push_back(std::move(msg));
   }
   return msgs;
+}
+
+// One TUM line: t tx ty tz qx qy qz qw (Hamilton quaternion).
+void write_pose(std::ofstream& out, double t, const msckf::Isometry3d& pose) {
+  const Eigen::Quaterniond q(pose.R);
+  char line[256];
+  std::snprintf(line, sizeof(line), "%.9f %.9f %.9f %.9f %.9f %.9f %.9f %.9f\n", t, pose.t(0),
+                pose.t(1), pose.t(2), q.x(), q.y(), q.z(), q.w());
+  out << line;
 }
 
 void print_stats(const char* name, const std::vector<double>& ms) {
@@ -153,6 +169,13 @@ int main(int argc, char** argv) {
       throw std::runtime_error("unknown backend " + args.backend);
     }
     std::printf("backend: %s\n", args.backend.c_str());
+    std::unique_ptr<msckf::loop::LoopClosure> loop;
+    if (args.loop) {
+      if (replay) {
+        throw std::runtime_error("--loop needs images; it cannot be used with --features");
+      }
+      loop = std::make_unique<msckf::loop::LoopClosure>(config);
+    }
 
     std::filesystem::create_directories(args.out);
     std::ofstream traj(args.out + "/traj_cpp.txt");
@@ -162,6 +185,13 @@ int main(int argc, char** argv) {
     if (args.dump_features) {
       feature_dump.open(args.out + "/features_cpp.txt");
     }
+    std::ofstream traj_loop, loop_timing;
+    if (loop) {
+      traj_loop.open(args.out + "/traj_loop.txt");
+      loop_timing.open(args.out + "/loop_timing.csv");
+      loop_timing << "timestamp,loop_ms\n";
+    }
+    std::vector<double> loop_ms;
     char line[256];
 
     using Clock = std::chrono::steady_clock;
@@ -188,11 +218,12 @@ int main(int argc, char** argv) {
       }
 
       msckf::FeatureMsg feature_msg;
+      msckf::StereoMsg stereo;
       double fe_ms = 0.0;
       if (replay) {
         feature_msg = replay_msgs[k];
       } else {
-        const msckf::StereoMsg stereo = dataset.load_stereo(k);   // disk I/O, not timed
+        stereo = dataset.load_stereo(k);   // disk I/O, not timed
         const auto t0 = Clock::now();
         feature_msg = image_processor.stereo_callback(stereo);
         fe_ms = ms_since(t0, Clock::now());
@@ -220,11 +251,16 @@ int main(int argc, char** argv) {
       total_ms.push_back(fe_ms + be_ms);
 
       if (result) {
-        const Eigen::Quaterniond q(result->pose.R);   // Hamilton, as TUM expects
-        const Eigen::Vector3d& p = result->pose.t;
-        std::snprintf(line, sizeof(line), "%.9f %.9f %.9f %.9f %.9f %.9f %.9f %.9f\n",
-                      result->timestamp, p(0), p(1), p(2), q.x(), q.y(), q.z(), q.w());
-        traj << line;
+        write_pose(traj, result->timestamp, result->pose);
+        if (loop) {
+          const auto t2 = Clock::now();
+          const msckf::Isometry3d corrected =
+              loop->process(result->timestamp, result->pose, stereo.cam0_image, stereo.cam1_image);
+          loop_ms.push_back(ms_since(t2, Clock::now()));
+          std::snprintf(line, sizeof(line), "%.9f,%.4f\n", t_img, loop_ms.back());
+          loop_timing << line;
+          write_pose(traj_loop, result->timestamp, corrected);
+        }
       }
 
       if (processed == 0) {
@@ -249,6 +285,17 @@ int main(int argc, char** argv) {
     }
     print_stats("backend", backend_ms);
     print_stats("total", total_ms);
+
+    if (loop) {
+      std::ofstream traj_final(args.out + "/traj_loop_final.txt");
+      for (const auto& [t, pose] : loop->final_trajectory()) {
+        write_pose(traj_final, t, pose);
+      }
+      const auto& st = loop->stats();
+      std::printf("loop closure: %ld keyframes, %ld candidates checked, %ld loops\n",
+                  st.keyframes, st.candidates, st.loops);
+      print_stats("loop", loop_ms);
+    }
 
     if (swo != nullptr) {
       const auto& st = swo->stats();

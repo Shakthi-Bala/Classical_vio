@@ -55,6 +55,18 @@ struct SwoConfig {
   std::string debug_log;               // if set: one CSV line per keyframe solve
 };
 
+// Loop closure (main_euroc --loop): keyframes, place recognition, pose graph.
+struct LoopConfig {
+  double kf_distance = 0.3;        // new keyframe after this much motion [m] ...
+  double kf_angle = 0.26;          // ... or rotation [rad] (15 deg)
+  int orb_features = 600;          // ORB features per keyframe image
+  double min_time_gap = 20.0;      // loop candidates are at least this much older [s]
+  double search_radius = 4.0;      // and this close by the corrected position [m]
+  double max_view_angle = 0.8;     // and look in a similar direction [rad]
+  int min_inliers = 25;            // PnP RANSAC inliers to accept a loop
+  double pnp_px = 3.0;             // PnP RANSAC reprojection threshold [px]
+};
+
 struct CameraConfig {
   std::string distortion_model = "radtan";   // "radtan" or "equidistant"
   Eigen::Vector4d intrinsics = Eigen::Vector4d::Zero();          // fx, fy, cx, cy
@@ -76,6 +88,7 @@ struct Config {
   OptimizationConfig optimization_config;
   Fixes fixes;
   SwoConfig swo;
+  LoopConfig loop;
 
   // Image processor.
   int grid_row = 4;
