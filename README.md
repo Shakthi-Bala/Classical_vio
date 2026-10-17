@@ -29,6 +29,21 @@ A stereo MSCKF written in Python, then rebuilt in C++17 and extended:
 | C++ sliding window | 0.156 m | 0 | 19.1 ms end to end in ROS 2, 1 core |
 | VINS-Fusion (no loop closure) | 0.217 m | 0 | 61 ms end to end in ROS 2, 4 cores |
 
+<table>
+<tr>
+<td width="50%" valign="top"><a href="cpp/README.md#final-comparison-11-euroc-sequences"><img src="cpp/results/final/accuracy_vs_latency.png" width="100%"></a><br><b>Accuracy vs latency.</b> The C++ sliding window is the most accurate, the C++ MSCKF matches VINS-Fusion, and both are 3–6x faster per frame.</td>
+<td width="50%" valign="top"><a href="cpp/README.md#final-comparison-11-euroc-sequences"><img src="cpp/results/final/ate_per_sequence.png" width="100%"></a><br><b>Every EuRoC sequence.</b> Trajectory error per sequence against the Python original and VINS-Fusion.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="cpp/README.md#cam0-only-features-what-broke-v2_03"><img src="cpp/results/final/v203_tracking.png" width="100%"></a><br><b>Finding the failure on V2_03.</b> cam0 blurs at long exposure, stereo matching drops to zero for seconds; keeping cam0-only tracks fixed it.</td>
+<td width="50%" valign="top"><a href="cpp/README.md#sliding-window-optimizer-ceres-back-end"><img src="cpp/results/final/traj_MH_05_difficult.png" width="100%"></a><br><b>Filter vs optimizer.</b> MSCKF and Ceres sliding window on the same front end, MH_05_difficult.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="cpp/README.md#profiling-and-optimization"><img src="cpp/results/profile/stages_before_after.png" width="100%"></a><br><b>Profiling.</b> Stage timers and flame graphs without perf access: 12.8 → 8.6 ms per frame, output unchanged.</td>
+<td width="50%" valign="top"><a href="cpp/README.md#python-quirk-ablation-11-euroc-sequences"><img src="cpp/results/ablation/ablation.png" width="100%"></a><br><b>Ablation of inherited quirks.</b> Each behaviour of the Python code tested on 11 sequences; the useful fixes cut error 0.615 → 0.249 m.</td>
+</tr>
+</table>
+
 **→ Write-up, plots and how to reproduce: [`cpp/README.md`](cpp/README.md)**
 · Code: [`cpp/`](cpp) (C++17) · original Python: [`Code/`](Code)
 

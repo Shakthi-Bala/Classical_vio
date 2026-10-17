@@ -97,7 +97,8 @@ profile comes from two tools that need no privileges:
 ![stages](results/profile/stages_before_after.png)
 
 These numbers come from an earlier run on a different compute node than the tables above.
-The straight port took 12.4 ms per frame there, and 8.6 ms after these changes:
+In the stage profile the straight port took 12.8 ms per frame there, and 8.6 ms after these
+changes:
 
 | Change | Why it was slow | Effect | Output |
 |---|---|---|---|
