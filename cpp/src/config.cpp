@@ -71,6 +71,7 @@ void apply(const YAML::Node& n, Config& c) {
   read(n, "track_precision", c.track_precision);
   read(n, "pyramid_levels", c.pyramid_levels);
   read(n, "patch_size", c.patch_size);
+  read(n, "mono_features", c.mono_features);
 
   read(n, "gravity_acc", c.gravity_acc);
   read(n, "max_cam_state_size", c.max_cam_state_size);
@@ -78,6 +79,7 @@ void apply(const YAML::Node& n, Config& c) {
   read(n, "rotation_threshold", c.rotation_threshold);
   read(n, "translation_threshold", c.translation_threshold);
   read(n, "tracking_rate_threshold", c.tracking_rate_threshold);
+  read(n, "mono_min_baseline", c.mono_min_baseline);
 
   // The YAML stores standard deviations (easier to read); the filter wants variances.
   auto read_std_as_var = [&n](const std::string& key, double& variance) {

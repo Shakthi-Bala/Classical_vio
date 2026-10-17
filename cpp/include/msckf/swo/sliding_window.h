@@ -25,7 +25,9 @@
 //  - Each keyframe has a full state (p, q, v, ba, bg); consecutive keyframes
 //    are tied by an IMU preintegration factor.
 //  - Landmarks are inverse depths in their first (anchor) keyframe; every
-//    stereo observation in a later keyframe is a reprojection factor.
+//    observation in a later keyframe is one reprojection factor per camera.
+//    A cam0-only landmark (Config::mono_features) has no stereo depth and is
+//    triangulated from two keyframes before it enters the optimization.
 //  - Frames that add little parallax are not keyframes: their pose is the IMU
 //    prediction from the latest optimized keyframe.
 //  - When the window is full, the oldest keyframe and the landmarks anchored
@@ -73,6 +75,7 @@ class SlidingWindowEstimator final : public Estimator {
     KeyFrameID anchor_id = 0;
     Eigen::Vector3d bearing = Eigen::Vector3d::UnitZ();   // (x, y, 1) in anchor cam0
     double inv_depth[1] = {1.0};
+    bool has_depth = true;   // false until a cam0-only landmark is triangulated
     std::map<KeyFrameID, Eigen::Vector4d> obs;
   };
 
@@ -88,6 +91,8 @@ class SlidingWindowEstimator final : public Estimator {
                      const Eigen::Vector3d& bg);
   void add_observations(KeyFrame& kf, const FeatureMsg& msg);
   std::optional<double> stereo_inverse_depth(const Eigen::Vector4d& z) const;
+  // Depth of the cam0-only landmarks from their anchor and newest keyframe.
+  void triangulate_landmarks();
 
   KeyFrame* keyframe(KeyFrameID id);
   bool in_window(KeyFrameID id) const;
@@ -106,6 +111,7 @@ class SlidingWindowEstimator final : public Estimator {
 
   SwoConfig cfg_;
   ImuNoise noise_;
+  bool mono_features_ = false;
 
   // Extrinsics.
   Eigen::Matrix3d R_bc0_, R_bc1_, R_c1c0_;

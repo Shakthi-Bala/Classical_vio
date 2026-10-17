@@ -1,5 +1,6 @@
 #include "msckf/swo/sliding_window.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <set>
@@ -20,11 +21,14 @@ namespace {
 // Same thresholds as VINS-Fusion.
 constexpr double kRepropagateAccBias = 0.10;    // [m/s^2]
 constexpr double kRepropagateGyroBias = 0.01;   // [rad/s]
+// A cam0-only landmark is triangulated once its two rays are this far apart.
+constexpr double kMinTriangulationAngle = 1.0 * M_PI / 180.0;   // [rad]
 
 }  // namespace
 
 SlidingWindowEstimator::SlidingWindowEstimator(const Config& config)
-    : cfg_(config.swo), noise_(ImuNoise::from_config(config)) {
+    : cfg_(config.swo), noise_(ImuNoise::from_config(config)),
+      mono_features_(config.mono_features) {
   const CameraExtrinsics cam0 = camera_to_imu(config.cam0);
   R_bc0_ = cam0.R_cam_imu;
   t_bc0_ = cam0.t_cam_imu;
@@ -148,15 +152,17 @@ void SlidingWindowEstimator::add_observations(KeyFrame& kf, const FeatureMsg& ms
     const Eigen::Vector4d z(f.u0, f.v0, f.u1, f.v1);
     auto it = landmarks_.find(f.id);
     if (it == landmarks_.end()) {
-      // New landmark, anchored here, depth from the stereo pair.
+      // New landmark, anchored here, depth from the stereo pair. Without one
+      // (mono_features) the depth comes later from triangulate_landmarks().
       const std::optional<double> inv_depth = stereo_inverse_depth(z);
-      if (!inv_depth) {
+      if (!inv_depth && !mono_features_) {
         continue;
       }
       Landmark lm;
       lm.anchor_id = kf.id;
       lm.bearing = Eigen::Vector3d(z(0), z(1), 1.0);
-      lm.inv_depth[0] = *inv_depth;
+      lm.inv_depth[0] = inv_depth.value_or(1.0);
+      lm.has_depth = inv_depth.has_value();
       lm.obs[kf.id] = z;
       landmarks_.emplace(f.id, lm);
     } else {
@@ -205,7 +211,40 @@ bool SlidingWindowEstimator::in_window(KeyFrameID id) const {
 }
 
 bool SlidingWindowEstimator::usable(const Landmark& lm) const {
-  return lm.obs.size() >= 2 && lm.obs.begin()->first == lm.anchor_id && in_window(lm.anchor_id);
+  return lm.has_depth && lm.obs.size() >= 2 && lm.obs.begin()->first == lm.anchor_id &&
+         in_window(lm.anchor_id);
+}
+
+void SlidingWindowEstimator::triangulate_landmarks() {
+  for (auto& [id, lm] : landmarks_) {
+    if (lm.has_depth || lm.obs.size() < 2) {
+      continue;
+    }
+    KeyFrame* anchor = keyframe(lm.anchor_id);
+    KeyFrame* kf = keyframe(lm.obs.rbegin()->first);
+    if (anchor == nullptr || kf == nullptr) {
+      continue;
+    }
+    // cam0 of the anchor -> cam0 of the newest observing keyframe.
+    const Eigen::Matrix3d R_wa = anchor->orientation().toRotationMatrix() * R_bc0_;
+    const Eigen::Vector3d p_wa = anchor->position() + anchor->orientation() * t_bc0_;
+    const Eigen::Matrix3d R_wk = kf->orientation().toRotationMatrix() * R_bc0_;
+    const Eigen::Vector3d p_wk = kf->position() + kf->orientation() * t_bc0_;
+    const Eigen::Matrix3d R_ka = R_wk.transpose() * R_wa;
+    const Eigen::Vector3d t_ka = R_wk.transpose() * (p_wa - p_wk);
+
+    const Eigen::Vector2d z_k = lm.obs.rbegin()->second.head<2>();
+    const Eigen::Vector3d ray_a = R_ka * lm.bearing.normalized();
+    const Eigen::Vector3d ray_k = Eigen::Vector3d(z_k(0), z_k(1), 1.0).normalized();
+    if (std::acos(std::clamp(ray_a.dot(ray_k), -1.0, 1.0)) < kMinTriangulationAngle) {
+      continue;
+    }
+    const double depth = two_view_depth(R_ka, t_ka, lm.bearing.head<2>(), z_k);
+    if (std::isfinite(depth) && depth > cfg_.min_depth && depth < cfg_.max_depth) {
+      lm.inv_depth[0] = 1.0 / depth;
+      lm.has_depth = true;
+    }
+  }
 }
 
 void SlidingWindowEstimator::landmark_factors(Landmark& lm, std::vector<ResidualBlockInfo>& out,
@@ -216,10 +255,13 @@ void SlidingWindowEstimator::landmark_factors(Landmark& lm, std::vector<Residual
     owned.emplace_back(cost);
     out.push_back({cost, huber_.get(), std::move(blocks)});
   };
+  // cam0-only observations (mono_features) have no cam1 factor.
   for (const auto& [kf_id, z] : lm.obs) {
     if (kf_id == lm.anchor_id) {
-      add(StereoAnchorFactor::create(lm.bearing, z.tail<2>(), R_c1c0_, t_c1c0_, sqrt_info),
-          {lm.inv_depth});
+      if (is_stereo(z)) {
+        add(StereoAnchorFactor::create(lm.bearing, z.tail<2>(), R_c1c0_, t_c1c0_, sqrt_info),
+            {lm.inv_depth});
+      }
       continue;
     }
     KeyFrame* kf = keyframe(kf_id);
@@ -227,9 +269,11 @@ void SlidingWindowEstimator::landmark_factors(Landmark& lm, std::vector<Residual
     add(new ReprojectionFactorAnalytic(lm.bearing, z.head<2>(), R_bc0_, t_bc0_, R_bc0_, t_bc0_,
                                        sqrt_info),
         blocks);
-    add(new ReprojectionFactorAnalytic(lm.bearing, z.tail<2>(), R_bc0_, t_bc0_, R_bc1_, t_bc1_,
-                                       sqrt_info),
-        blocks);
+    if (is_stereo(z)) {
+      add(new ReprojectionFactorAnalytic(lm.bearing, z.tail<2>(), R_bc0_, t_bc0_, R_bc1_, t_bc1_,
+                                         sqrt_info),
+          blocks);
+    }
   }
 }
 
@@ -392,6 +436,11 @@ void SlidingWindowEstimator::marginalize_oldest() {
     }
     KeyFrame* new_anchor = keyframe(lm.obs.begin()->first);
     const Eigen::Vector4d& z = lm.obs.begin()->second;
+    if (!lm.has_depth) {   // not triangulated yet: only the anchor moves
+      lm.anchor_id = new_anchor->id;
+      lm.bearing = Eigen::Vector3d(z(0), z(1), 1.0);
+      continue;
+    }
     const Eigen::Vector3d p_w =
         R_w0 * (R_bc0_ * (lm.bearing / lm.inv_depth[0]) + t_bc0_) + p_w0;
     const Eigen::Vector3d p_b =
@@ -448,6 +497,9 @@ std::optional<VioResult> SlidingWindowEstimator::feature_callback(const FeatureM
   }
 
   push_keyframe(msg, p, q, v, last.acc_bias(), last.gyro_bias());
+  if (mono_features_) {
+    triangulate_landmarks();
+  }
   const long n_landmarks = optimize();
   const long outliers_before = stats_.outliers_removed;
   remove_outliers();

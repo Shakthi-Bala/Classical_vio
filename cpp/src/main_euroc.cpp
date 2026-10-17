@@ -100,7 +100,11 @@ std::vector<msckf::FeatureMsg> read_feature_file(const std::string& file) {
     in >> msg.timestamp >> n;
     msg.features.resize(n);
     for (msckf::FeatureMeasurement& f : msg.features) {
-      in >> f.id >> f.u0 >> f.v0 >> f.u1 >> f.v1;
+      // cam1 of a cam0-only feature is written as "nan", which >> rejects.
+      std::string u1, v1;
+      in >> f.id >> f.u0 >> f.v0 >> u1 >> v1;
+      f.u1 = std::stod(u1);
+      f.v1 = std::stod(v1);
     }
     msgs.push_back(std::move(msg));
   }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -26,12 +27,17 @@ struct StereoMsg {
   cv::Mat cam1_image;
 };
 
-// One stereo observation of a feature, in undistorted normalized coordinates.
+// One observation of a feature, in undistorted normalized coordinates. With
+// Config::mono_features a feature without a stereo match has NaN cam1
+// coordinates.
 struct FeatureMeasurement {
   FeatureID id = 0;
   double u0 = 0.0, v0 = 0.0;   // cam0
   double u1 = 0.0, v1 = 0.0;   // cam1
 };
+
+// True if an observation (u0, v0, u1, v1) has its cam1 part.
+inline bool is_stereo(const Eigen::Vector4d& z) { return std::isfinite(z(2)); }
 
 struct FeatureMsg {
   double timestamp = 0.0;

@@ -1,5 +1,6 @@
 // gtest port of Code/test/feature_initialization_test.py.
 
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -36,8 +37,9 @@ std::vector<Isometry3d> sphere_cameras() {
 }
 
 // Triangulates `feature` from the six cameras with the given pixel noise.
+// Cameras whose bit is set in `mono_mask` give cam0-only observations.
 Eigen::Vector3d triangulate(const Eigen::Vector3d& feature, double noise_std,
-                            std::mt19937& rng, bool* status) {
+                            std::mt19937& rng, bool* status, unsigned mono_mask = 0) {
   // Mono setup, as in the Python test: cam1 == cam0.
   Feature::R_cam0_cam1 = Eigen::Matrix3d::Identity();
   Feature::t_cam0_cam1 = Eigen::Vector3d::Zero();
@@ -59,7 +61,9 @@ Eigen::Vector3d triangulate(const Eigen::Vector3d& feature, double noise_std,
     const Eigen::Vector3d p = cam_pose_inv.R * feature + cam_pose_inv.t;
     const double u = p(0) / p(2) + noise(rng);
     const double v = p(1) / p(2) + noise(rng);
-    f.observations[i] = Eigen::Vector4d(u, v, u, v);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const bool mono = (mono_mask >> i) & 1u;
+    f.observations[i] = Eigen::Vector4d(u, v, mono ? nan : u, mono ? nan : v);
   }
   *status = f.initialize_position(cam_states);
   return f.position;
@@ -87,6 +91,19 @@ TEST(Feature, InitializationNoiseFreeIsExact) {
   const Eigen::Vector3d estimate = triangulate(feature, 0.0, rng, &status);
   EXPECT_TRUE(status);
   EXPECT_NEAR((estimate - feature).norm(), 0.0, 1e-9);
+}
+
+TEST(Feature, InitializationWithCam0OnlyObservations) {
+  // Config::mono_features: some observations have no cam1 part. Odd cameras
+  // (the last observation is cam0-only) and even cameras (it is stereo).
+  std::mt19937 rng(13);
+  const Eigen::Vector3d feature(0.3, -0.2, 0.1);
+  for (const unsigned mono_mask : {0b101010u, 0b010101u}) {
+    bool status = false;
+    const Eigen::Vector3d estimate = triangulate(feature, 0.0, rng, &status, mono_mask);
+    EXPECT_TRUE(status);
+    EXPECT_NEAR((estimate - feature).norm(), 0.0, 1e-9) << "mask " << mono_mask;
+  }
 }
 
 TEST(Feature, HuberWeight) {

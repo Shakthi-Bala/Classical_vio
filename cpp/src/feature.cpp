@@ -58,8 +58,21 @@ Eigen::Vector3d Feature::generate_initial_guess(const Isometry3d& T_c1_c2,
   return Eigen::Vector3d(z1(0), z1(1), 1.0) * depth;
 }
 
+bool Feature::has_stereo_observation() const {
+  for (const auto& [cam_id, z] : observations) {
+    if (is_stereo(z)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool Feature::check_motion(const CamStateServer& cam_states) const {
-  if (optimization_config.translation_threshold < 0) {
+  return check_motion(cam_states, optimization_config.translation_threshold);
+}
+
+bool Feature::check_motion(const CamStateServer& cam_states, double threshold) const {
+  if (threshold < 0) {
     return true;
   }
 
@@ -84,7 +97,7 @@ bool Feature::check_motion(const CamStateServer& cam_states) const {
   const double parallel = translation.dot(feature_direction);
   const Eigen::Vector3d orthogonal_translation = translation - parallel * feature_direction;
 
-  return orthogonal_translation.norm() > optimization_config.translation_threshold;
+  return orthogonal_translation.norm() > threshold;
 }
 
 bool Feature::initialize_position(const CamStateServer& cam_states) {
@@ -94,6 +107,7 @@ bool Feature::initialize_position(const CamStateServer& cam_states) {
 
   const Isometry3d T_cam1_cam0 = Isometry3d(R_cam0_cam1, t_cam0_cam1).inverse();
 
+  size_t last_cam0 = 0;   // index of the last cam0 observation
   for (const auto& [cam_id, m] : observations) {
     const auto it = cam_states.find(cam_id);
     if (it == cam_states.end()) {
@@ -101,16 +115,16 @@ bool Feature::initialize_position(const CamStateServer& cam_states) {
     }
     const CAMState& cam_state = it->second;
 
-    measurements.push_back(m.head<2>());
-    measurements.push_back(m.tail<2>());
-
     // Takes a vector from this camera frame to the world frame.
     const Isometry3d cam0_pose(to_rotation(cam_state.orientation).transpose(),
                                cam_state.position);
-    const Isometry3d cam1_pose = cam0_pose * T_cam1_cam0;
-
+    last_cam0 = cam_poses.size();
+    measurements.push_back(m.head<2>());
     cam_poses.push_back(cam0_pose);
-    cam_poses.push_back(cam1_pose);
+    if (is_stereo(m)) {   // cam0-only observations (Config::mono_features) have no cam1 part
+      measurements.push_back(m.tail<2>());
+      cam_poses.push_back(cam0_pose * T_cam1_cam0);
+    }
   }
   if (cam_poses.empty()) {
     return false;
@@ -124,8 +138,8 @@ bool Feature::initialize_position(const CamStateServer& cam_states) {
   }
 
   // Initial guess from the first and the last cam0 observation.
-  const Eigen::Vector3d initial_position = generate_initial_guess(
-      cam_poses[cam_poses.size() - 2], measurements[0], measurements[measurements.size() - 2]);
+  const Eigen::Vector3d initial_position =
+      generate_initial_guess(cam_poses[last_cam0], measurements[0], measurements[last_cam0]);
   Eigen::Vector3d solution(initial_position(0) / initial_position(2),
                            initial_position(1) / initial_position(2),
                            1.0 / initial_position(2));

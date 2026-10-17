@@ -57,6 +57,8 @@ class MSCKF : public Estimator {
   void measurement_update(const Eigen::MatrixXd& H, const Eigen::VectorXd& r);
   bool gating_test(const Eigen::MatrixXd& H, const Eigen::VectorXd& r, int dof) const;
 
+  // Feature::check_motion, plus mono_min_baseline for a cam0-only feature.
+  bool enough_motion(const Feature& feature) const;
   void remove_lost_features();
   std::vector<StateID> find_redundant_cam_states() const;
   void prune_cam_state_buffer();
