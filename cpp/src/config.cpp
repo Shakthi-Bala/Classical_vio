@@ -122,6 +122,19 @@ void apply(const YAML::Node& n, Config& c) {
     read(s, "debug_log", w.debug_log);
   }
 
+  if (const YAML::Node l = n["loop"]) {
+    LoopConfig& o = c.loop;
+    read(l, "kf_distance", o.kf_distance);
+    read(l, "kf_angle", o.kf_angle);
+    read(l, "orb_features", o.orb_features);
+    read(l, "min_time_gap", o.min_time_gap);
+    read(l, "search_radius", o.search_radius);
+    read(l, "max_view_angle", o.max_view_angle);
+    read(l, "min_inliers", o.min_inliers);
+    read(l, "max_loop_correction", o.max_loop_correction);
+    read(l, "pnp_px", o.pnp_px);
+  }
+
   if (const YAML::Node f = n["fixes"]) {
     read(f, "epipolar_full_dot", c.fixes.epipolar_full_dot);
     read(f, "lm_upstream_loops", c.optimization_config.lm_upstream_loops);

@@ -126,7 +126,7 @@ index 37bd75c..59b3968 100755
      return 0;
  }
 diff --git a/vins/src/utility/visualization.cpp b/vins/src/utility/visualization.cpp
-index 8146f19..4789e89 100755
+index 8146f19..b674c41 100755
 --- a/vins/src/utility/visualization.cpp
 +++ b/vins/src/utility/visualization.cpp
 @@ -167,7 +167,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::msg::Header &header
@@ -138,3 +138,28 @@ index 8146f19..4789e89 100755
          foutC.precision(5);
          foutC << estimator.Ps[WINDOW_SIZE].x() << ","
                << estimator.Ps[WINDOW_SIZE].y() << ","
+@@ -319,6 +319,24 @@ void pubPointCloud(const Estimator &estimator, const std_msgs::msg::Header &head
+ 
+ void pubTF(const Estimator &estimator, const std_msgs::msg::Header &header)
+ {
++    // Patch: publish the camera-IMU extrinsics, which loop_fusion needs (without
++    // them its PnP gets a zero rotation and returns NaN, so no loop is ever
++    // accepted). TF broadcasting below stays disabled as in this port.
++    if (estimator.solver_flag == Estimator::SolverFlag::NON_LINEAR)
++    {
++        nav_msgs::msg::Odometry extrinsic;
++        extrinsic.header = header;
++        extrinsic.header.frame_id = WORLD_FRAME_ID;
++        extrinsic.pose.pose.position.x = estimator.tic[0].x();
++        extrinsic.pose.pose.position.y = estimator.tic[0].y();
++        extrinsic.pose.pose.position.z = estimator.tic[0].z();
++        Quaterniond q_ic{estimator.ric[0]};
++        extrinsic.pose.pose.orientation.x = q_ic.x();
++        extrinsic.pose.pose.orientation.y = q_ic.y();
++        extrinsic.pose.pose.orientation.z = q_ic.z();
++        extrinsic.pose.pose.orientation.w = q_ic.w();
++        pub_extrinsic->publish(extrinsic);
++    }
+     return; // tmp.
+ 
+ 

@@ -6,7 +6,7 @@ plots and how to reproduce them are in [README.md](README.md).
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Faithful C++17/Eigen port of the Python stereo MSCKF in [`../Code`](../Code), verified module by module, offline on EuRoC MH_01_easy | done |
-| 2 | Profiling, quirk ablation on all 11 EuRoC sequences, Ceres sliding-window back end, cam0-only features, ROS 2 node, VINS-Fusion baseline, CI (all offline on EuRoC or EuRoC bag playback) | done |
+| 2 | Profiling, quirk ablation on all 11 EuRoC sequences, Ceres sliding-window back end, cam0-only features, ROS 2 node, VINS-Fusion baseline, TUM-VI as a second dataset, loop closure, CI on x86-64 and arm64, Docker (all offline on recorded data or bag playback) | done (including loop closure) |
 | 3 | Live RealSense, Jetson / onboard the PeAR drone: real-time factor, latency and power on the embedded board | not started |
 
 ## Baseline

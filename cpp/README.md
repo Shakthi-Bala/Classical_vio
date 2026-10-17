@@ -18,12 +18,14 @@ It is benchmarked against VINS-Fusion on all 11 EuRoC sequences. The original pl
 | | Result |
 |---|---|
 | Port | Fed the same features, the C++ filter matches the Python to 1e-9 m. The front end gives identical features on all 2882 MH_01 frames. |
-| Speed | 8.1 ms per frame on one core (6.2x real time) against 25.3 ms for the Python, on the same node |
+| Speed | 8.06 ± 0.01 ms per frame on one core (6.2x real time) against 25.2 ± 0.2 ms for the Python, 5 runs on the same node |
 | Python quirks | 9 behaviours of the Python code reproduced on purpose, 7 with an opt-in fix. The recommended fixes cut mean ATE from 0.615 to 0.249 m over 11 sequences. |
 | Sliding window (Ceres) | IMU preintegration, inverse-depth landmarks, Schur-complement marginalization, analytic Jacobians |
-| Cam0-only features | V2_03 lost all stereo matches for up to 7 s. Keeping cam0-only tracks brings it from 0.677 m (MSCKF) and divergence (sliding window) to 0.149 / 0.200 m. |
-| ROS 2 node | Real-time bag playback gives the same poses as the offline run (within 2e-5 m), at 10.7 ms end to end for the MSCKF |
-| vs VINS-Fusion | Mean ATE over all 11 sequences: sliding window 0.156 m, MSCKF 0.200 m, VINS-Fusion 0.217 m. VINS-Fusion is best on V1_03. |
+| Cam0-only features | V2_03 lost all stereo matches for up to 7 s. Keeping cam0-only tracks brings it from 0.677 m (MSCKF) and divergence (sliding window) to 0.217 / 0.200 m. |
+| ROS 2 node | Real-time bag playback gives the same poses as the offline run (to 4e-9 m, the print precision), at 10.1 ms end to end for the MSCKF |
+| vs VINS-Fusion | Mean ATE over all 11 sequences: sliding window 0.156 m, MSCKF 0.197 m, VINS-Fusion 0.217 m. VINS-Fusion is best on V1_03. |
+| Loop closure | 4-DoF pose graph with ORB / stereo PnP loops: mean ATE 0.111 m (MSCKF) and 0.105 m (sliding window), against 0.132 m for VINS-Fusion with its loop closure |
+| Second dataset | TUM-VI room1–6 (handheld fisheye): MSCKF 0.129 m mean ATE, no failures, with EuRoC's settings |
 
 ![accuracy vs latency](results/final/accuracy_vs_latency.png)
 
@@ -32,7 +34,9 @@ Sections: [Phase 1 port](#phase-1-python-vs-c-on-euroc-mh_01_easy) ·
 [Quirk ablation](#python-quirk-ablation-11-euroc-sequences) ·
 [Cam0-only features](#cam0-only-features-what-broke-v2_03) ·
 [Sliding window](#sliding-window-optimizer-ceres-back-end) · [ROS 2](#ros-2-node) ·
-[Final comparison](#final-comparison-11-euroc-sequences) · [Build](#build) ·
+[Final comparison](#final-comparison-11-euroc-sequences) · [Loop closure](#loop-closure) ·
+[TUM-VI](#second-dataset-tum-vi) ·
+[Build](#build) ·
 [Reproduce](#run-and-reproduce) · [Code tour](#code-tour-read-in-this-order) ·
 [Quirks](#python-quirks-reproduced-on-purpose)
 
@@ -41,7 +45,7 @@ Sections: [Phase 1 port](#phase-1-python-vs-c-on-euroc-mh_01_easy) ·
 ![trajectory](results/trajectory_xy.png)
 
 Both runs use a 40 s start offset and deterministic replay (no threads), and run one
-after the other on the same compute node
+after the other on the same compute node, compute-3-03
 ([`scripts/run_timing_job.sh`](scripts/run_timing_job.sh)). Accuracy comes from the
 unchanged [`Code/evaluate.py`](../Code/evaluate.py):
 
@@ -49,13 +53,15 @@ unchanged [`Code/evaluate.py`](../Code/evaluate.py):
 |---|---|---|
 | ATE RMSE (Umeyama SE3) | 0.1289 m | 0.1284 m |
 | RPE @ 10 m | 1.48 % / 1.41 deg | 1.49 % / 1.39 deg |
-| Front end, mean / p95 | 13.03 / 14.18 ms | 6.21 / 7.00 ms |
-| Back end, mean / p95 | 12.24 / 28.87 ms | 1.87 / 4.09 ms |
-| Total per frame, mean / p95 | 25.27 / 42.00 ms | 8.08 / 10.36 ms |
-| Real-time factor | 1.98x | 6.19x |
+| Front end, mean / p95 | 13.03 / 14.19 ms | 6.20 / 7.00 ms |
+| Back end, mean / p95 | 12.13 / 28.57 ms | 1.86 / 4.08 ms |
+| Total per frame, mean / p95 | 25.16 / 41.75 ms | 8.06 / 10.34 ms |
+| Real-time factor | 1.99x | 6.20x |
 
-The C++ runs on one core (`--threads 1`). Repeated runs on the same node vary by up to
-about 10 % (another run gave 26.9 and 8.9 ms).
+The C++ runs on one core (`--threads 1`). Over 5 runs the per-frame mean is
+25.17 ± 0.16 ms (Python) and 8.06 ± 0.01 ms (C++)
+([`results/timing_summary.md`](results/timing_summary.md)). The trajectories are
+identical in every run: the replay is deterministic.
 
 ![latency](results/latency.png)
 
@@ -96,16 +102,17 @@ profile comes from two tools that need no privileges:
 
 ![stages](results/profile/stages_before_after.png)
 
-These numbers come from an earlier run on a different compute node than the tables above.
-In the stage profile the straight port took 12.8 ms per frame there, and 8.6 ms after these
-changes:
+Before and after were measured on compute-3-03, the node of the tables above. "Before"
+is the optimization commit (`b4daaa8`) with its three changes reverted, so only those
+differ. The frame time drops from 10.39 to 8.06 ms (4.8x to 6.2x real time), and the
+trajectory stays equal to 1e-9 m:
 
-| Change | Why it was slow | Effect | Output |
+| Change | Why it was slow | Effect (ms per frame) | Output |
 |---|---|---|---|
-| Build each image pyramid once ([`create_image_pyramids`](src/image_processor.cpp)) | 5 KLT calls per frame each rebuilt both pyramids: 10 builds for 3 images | front end 9.25 -> 7.63 ms | bit-identical features and trajectory |
-| `P - K (H P)` instead of `(I - K H) P` in [`measurement_update`](src/msckf.cpp) | an extra 141 x 141 x 141 product, and `H P` computed twice | update 2.06 -> 1.51 ms | trajectory equal to 1e-9 m |
-| Gating on the non-zero columns of `H` only ([`gating_test`](src/msckf.cpp)) | `H P H^T` with a 141-wide `H` that is zero outside 2-20 camera blocks | gating 0.86 -> 0.12 ms | trajectory equal to 1e-9 m |
-| `--threads 1` for OpenCV | ~100 points per KLT call are too few to pay for threads | front end 7.6 -> 7.3 ms (before the two back-end changes) | identical |
+| Build each image pyramid once ([`create_image_pyramids`](src/image_processor.cpp)) | 5 KLT calls per frame each rebuilt both pyramids: 10 builds for 3 images | front end 7.37 -> 6.19 (stereo KLT 5.18 -> 3.77, temporal KLT 1.09 -> 0.76, plus 0.55 for building the pyramids) | bit-identical features and trajectory |
+| `P - K (H P)` instead of `(I - K H) P` in [`measurement_update`](src/msckf.cpp) | an extra 141 x 141 x 141 product, and `H P` computed twice | update 1.75 -> 1.23 | trajectory equal to 1e-9 m |
+| Gating on the non-zero columns of `H` only ([`gating_test`](src/msckf.cpp)) | `H P H^T` with a 141-wide `H` that is zero outside 2-20 camera blocks | gating 0.74 -> 0.10 | trajectory equal to 1e-9 m |
+| `--threads 1` for OpenCV | ~100 points per KLT call are too few to pay for threads | 8.36 (default pool, 4 CPUs) -> 8.06 | identical |
 
 What is left: KLT optical flow (stereo forward and backward, and temporal) is now about
 half of a frame. Cutting it further means changing the algorithm (fewer LK iterations, no
@@ -185,26 +192,39 @@ With `mono_features: true` ([`config/euroc_mono.yaml`](config/euroc_mono.yaml)):
   newest keyframe once the rays are 1 degree apart. Its observations have a cam0
   reprojection factor only.
 
-| ATE RMSE [m] | MSCKF, stereo only | MSCKF, + cam0-only | Sliding window, stereo only | Sliding window, + cam0-only |
-|---|---|---|---|---|
-| MH_01_easy | 0.088 | 0.157 | 0.101 | 0.064 |
-| MH_02_easy | 0.205 | 0.223 | 0.083 | 0.077 |
-| MH_03_medium | 0.234 | 0.318 | 0.215 | 0.230 |
-| MH_04_difficult | 0.415 | 0.418 | 0.280 | 0.256 |
-| MH_05_difficult | 0.420 | 0.314 | 0.175 | 0.179 |
-| V1_01_easy | 0.117 | 0.122 | 0.078 | 0.061 |
-| V1_02_medium | 0.148 | 0.135 | 0.082 | 0.069 |
-| V1_03_difficult | 0.244 | 0.194 | 0.299 | 0.277 |
-| V2_01_easy | 0.095 | 0.101 | 0.117 | 0.102 |
-| V2_02_medium | 0.100 | 0.075 | 0.210 | 0.203 |
-| V2_03_difficult | 0.677 | 0.149 | div. | 0.200 |
-| mean, first 10 | 0.207 | 0.206 | 0.164 | 0.152 |
-| mean, all 11 | 0.249 | 0.200 | - | 0.156 |
+| ATE RMSE [m] | MSCKF stereo only | MSCKF mono | MSCKF mono, prune | SWO stereo only | SWO mono | SWO mono, prune |
+|---|---|---|---|---|---|---|
+| MH_01_easy | 0.088 | 0.157 | 0.091 | 0.101 | 0.064 | 0.091 |
+| MH_02_easy | 0.205 | 0.223 | 0.138 | 0.083 | 0.077 | 0.073 |
+| MH_03_medium | 0.234 | 0.318 | 0.225 | 0.215 | 0.230 | 0.199 |
+| MH_04_difficult | 0.415 | 0.418 | 0.414 | 0.280 | 0.256 | 0.205 |
+| MH_05_difficult | 0.420 | 0.314 | 0.414 | 0.175 | 0.179 | 0.203 |
+| V1_01_easy | 0.117 | 0.122 | 0.124 | 0.078 | 0.061 | 0.065 |
+| V1_02_medium | 0.148 | 0.135 | 0.165 | 0.082 | 0.069 | 0.094 |
+| V1_03_difficult | 0.244 | 0.194 | 0.217 | 0.299 | 0.277 | 0.372 |
+| V2_01_easy | 0.095 | 0.101 | 0.077 | 0.117 | 0.102 | 0.115 |
+| V2_02_medium | 0.100 | 0.075 | 0.086 | 0.210 | 0.203 | 0.204 |
+| V2_03_difficult | 0.677 | 0.149 | 0.217 | div. | 0.200 | 0.192 |
+| failures | 0 | 0 | 0 | 1 | 0 | 0 |
+| mean, 10 seq. all completed | 0.207 | 0.206 | 0.195 | 0.164 | 0.152 | 0.162 |
+| mean, all 11 seq. | 0.249 | 0.200 | 0.197 | - | 0.156 | 0.165 |
 
-The sliding window improves on 8 of the 10 other sequences as well. For the MSCKF the
-change is mixed outside V2_03: better on 4, worse on 6, the same on average (0.206 vs
-0.207 m). Both final
-configurations in the comparison below use cam0-only features.
+"mono" is `config/euroc_mono.yaml`; "prune" (`config/euroc_mono_prune.yaml`) also makes a
+full grid cell drop cam0-only features before stereo ones (`mono_prune_first`).
+
+- **Sliding window:** cam0-only features help on 8 of the 10 other sequences as well, and
+  the sliding window keeps `euroc_mono.yaml`. Pruning cam0-only features first makes it
+  slightly worse (0.165 vs 0.156 m).
+- **MSCKF:** plain cam0-only features fix V2_03 but are mixed elsewhere (better on 4 of 10,
+  worse on 6, the same mean). The cause is the front end: cam0-only tracks take grid slots
+  that stereo features would otherwise keep, and the filter gets depth only from stereo or
+  from motion. With pruning it is better than stereo-only on 7 of 10 sequences, and the
+  mean drops to 0.195 m (10 sequences) and 0.197 m (all 11). The MSCKF uses
+  `euroc_mono_prune.yaml`.
+- These settings were chosen on the same 11 sequences they are scored on; there is no
+  separate validation set. A third variant for the MSCKF (cam0-only observations only in
+  frames with fewer than 30 stereo features) was tried and dropped: better on 7 of 10, but
+  the same mean as plain cam0-only features.
 
 ## Sliding-window optimizer (Ceres) back end
 
@@ -243,15 +263,17 @@ It builds the same library as a CMake subproject, so it runs exactly the code ab
 - Stereo images are paired by timestamp, and a pair is processed only after every IMU
   sample up to its timestamp. This is the same order as the offline replay, whatever order
   DDS delivers the topics in.
-- Played back in real time from the MH_01 ROS 2 bag with `config/euroc_mono.yaml`, the node
-  gives the same poses as `main_euroc` (ATE 0.1569 m for the MSCKF and
-  0.0640 m for the sliding window). Positions agree within 2e-5 m; the difference
-  comes from OpenCV 4.13 / Eigen 5 in the ROS environment.
+- Played back in real time from the MH_01 ROS 2 bag with the final configurations, the node
+  gives the same 2862 poses as `main_euroc`, to 4e-9 m (the print precision): ATE 0.0914 m
+  for the MSCKF and 0.0640 m for the sliding window. That needs the same timestamp
+  conversion as the offline reader. The node first used `sec + 1e-9 * nanosec`, which
+  rounds differently in the last bit, and the filter amplified that to 1.3 cm by the end
+  of MH_01.
 
 | MH_01, ROS 2, real-time playback, compute-3-03 | process mean / p95 | end to end mean / p95 |
 |---|---|---|
-| C++ MSCKF | 10.1 / 12.6 ms | 10.7 / 14.9 ms |
-| C++ sliding window | 18.8 / 36.8 ms | 19.1 / 37.0 ms |
+| C++ MSCKF | 9.7 / 13.0 ms | 10.1 / 14.7 ms |
+| C++ sliding window | 18.8 / 36.7 ms | 19.1 / 36.8 ms |
 | VINS-Fusion (4 cores, its own threads) | - | 61.0 / 202 ms |
 
 End to end runs from the arrival of the later image of a pair to the published odometry,
@@ -268,54 +290,60 @@ run script is [`ros2/run_euroc_bag.sh`](ros2/run_euroc_bag.sh); for the environm
 
 ![final](results/final/ate_per_sequence.png)
 
-"MSCKF" and "SWO" are the C++ back ends with [`config/euroc_mono.yaml`](config/euroc_mono.yaml)
-(quirk fixes and cam0-only features). "MSCKF = Python" is the C++ with no fix.
+"MSCKF" is the C++ filter with [`config/euroc_mono_prune.yaml`](config/euroc_mono_prune.yaml)
+and "SWO" the sliding window with [`config/euroc_mono.yaml`](config/euroc_mono.yaml) (quirk
+fixes and cam0-only features). "MSCKF = Python" is the C++ with no fix.
 
 | ATE RMSE [m] | Python | MSCKF = Python | MSCKF | SWO | VINS-Fusion |
 |---|---|---|---|---|---|
-| MH_01_easy | 0.129 | 0.128 | 0.157 | 0.064 | 0.208 |
-| MH_02_easy | 0.472 | 0.576 | 0.223 | 0.077 | 0.214 |
-| MH_03_medium | 0.214 | 0.214 | 0.318 | 0.230 | 0.313 |
-| MH_04_difficult | 0.880 | 1.030 | 0.418 | 0.256 | 0.439 |
-| MH_05_difficult | 0.819 | 0.869 | 0.314 | 0.179 | 0.312 |
-| V1_01_easy | 0.346 | 0.384 | 0.122 | 0.061 | 0.113 |
-| V1_02_medium | 0.128 | 0.128 | 0.135 | 0.069 | 0.107 |
-| V1_03_difficult | 0.429 | 0.429 | 0.194 | 0.277 | 0.113 |
-| V2_01_easy | 0.276 | 0.270 | 0.101 | 0.102 | 0.131 |
-| V2_02_medium | 0.204 | 0.204 | 0.075 | 0.203 | 0.123 |
-| V2_03_difficult | fail | 2.535 | 0.149 | 0.200 | 0.313 |
+| MH_01_easy | 0.129 | 0.128 | 0.091 | 0.064 | 0.208 |
+| MH_02_easy | 0.472 | 0.576 | 0.138 | 0.077 | 0.214 |
+| MH_03_medium | 0.214 | 0.214 | 0.225 | 0.230 | 0.313 |
+| MH_04_difficult | 0.880 | 1.030 | 0.414 | 0.256 | 0.439 |
+| MH_05_difficult | 0.819 | 0.869 | 0.414 | 0.179 | 0.312 |
+| V1_01_easy | 0.346 | 0.384 | 0.124 | 0.061 | 0.113 |
+| V1_02_medium | 0.128 | 0.128 | 0.165 | 0.069 | 0.107 |
+| V1_03_difficult | 0.429 | 0.429 | 0.217 | 0.277 | 0.113 |
+| V2_01_easy | 0.276 | 0.270 | 0.077 | 0.102 | 0.131 |
+| V2_02_medium | 0.204 | 0.204 | 0.086 | 0.203 | 0.123 |
+| V2_03_difficult | fail | 2.535 | 0.217 | 0.200 | 0.313 |
 | failures | 1 | 0 | 0 | 0 | 0 |
-| mean, 10 seq. all completed | 0.390 | 0.423 | 0.206 | 0.152 | 0.207 |
-| mean, all 11 seq. | - | 0.615 | 0.200 | 0.156 | 0.217 |
+| mean, 10 seq. all completed | 0.390 | 0.423 | 0.195 | 0.152 | 0.207 |
+| mean, all 11 seq. | - | 0.615 | 0.197 | 0.156 | 0.217 |
 
 | RPE @ 10 m [% / deg] | Python | MSCKF = Python | MSCKF | SWO | VINS-Fusion |
 |---|---|---|---|---|---|
-| MH_01_easy | 1.48 / 1.41 | 1.49 / 1.39 | 1.42 / 1.35 | 0.91 / 0.78 | 2.05 / 0.93 |
-| MH_02_easy | 3.37 / 2.91 | 4.58 / 3.04 | 2.15 / 0.81 | 0.64 / 0.55 | 2.19 / 0.91 |
-| MH_03_medium | 1.96 / 0.74 | 1.96 / 0.74 | 2.14 / 1.00 | 1.57 / 0.91 | 2.55 / 0.71 |
-| MH_04_difficult | 7.50 / 2.88 | 6.80 / 3.25 | 3.02 / 1.03 | 1.93 / 0.88 | 4.30 / 0.89 |
-| MH_05_difficult | 2.97 / 1.98 | 3.13 / 2.07 | 2.46 / 0.92 | 1.44 / 0.72 | 3.86 / 0.90 |
-| V1_01_easy | 3.51 / 6.89 | 3.56 / 6.19 | 2.38 / 3.62 | 2.29 / 2.96 | 2.65 / 3.01 |
-| V1_02_medium | 1.55 / 1.54 | 1.55 / 1.54 | 1.33 / 0.89 | 1.18 / 1.24 | 1.56 / 0.88 |
-| V1_03_difficult | 2.89 / 4.34 | 2.89 / 4.34 | 1.43 / 1.80 | 2.07 / 2.06 | 1.33 / 2.59 |
-| V2_01_easy | 2.38 / 2.91 | 2.11 / 2.92 | 1.18 / 0.98 | 1.54 / 2.21 | 1.30 / 2.75 |
-| V2_02_medium | 1.31 / 2.05 | 1.31 / 2.05 | 0.85 / 1.15 | 1.02 / 1.50 | 1.14 / 2.18 |
-| V2_03_difficult | fail | 9.99 / 4.52 | 1.22 / 1.52 | 2.26 / 2.12 | 1.51 / 1.81 |
-| mean, 10 seq. all completed | 2.89 / 2.77 | 2.94 / 2.75 | 1.84 / 1.35 | 1.46 / 1.38 | 2.29 / 1.57 |
+| MH_01_easy | 1.48 / 1.41 | 1.49 / 1.39 | 1.25 / 1.07 | 0.91 / 0.78 | 2.05 / 0.93 |
+| MH_02_easy | 3.37 / 2.91 | 4.58 / 3.04 | 1.66 / 1.01 | 0.64 / 0.55 | 2.19 / 0.91 |
+| MH_03_medium | 1.96 / 0.74 | 1.96 / 0.74 | 1.80 / 0.96 | 1.57 / 0.91 | 2.55 / 0.71 |
+| MH_04_difficult | 7.50 / 2.88 | 6.80 / 3.25 | 3.03 / 1.05 | 1.93 / 0.88 | 4.30 / 0.89 |
+| MH_05_difficult | 2.97 / 1.98 | 3.13 / 2.07 | 2.12 / 0.91 | 1.44 / 0.72 | 3.86 / 0.90 |
+| V1_01_easy | 3.51 / 6.89 | 3.56 / 6.19 | 2.33 / 3.42 | 2.29 / 2.96 | 2.65 / 3.01 |
+| V1_02_medium | 1.55 / 1.54 | 1.55 / 1.54 | 1.39 / 1.08 | 1.18 / 1.24 | 1.56 / 0.88 |
+| V1_03_difficult | 2.89 / 4.34 | 2.89 / 4.34 | 1.61 / 1.37 | 2.07 / 2.06 | 1.33 / 2.59 |
+| V2_01_easy | 2.38 / 2.91 | 2.11 / 2.92 | 0.79 / 0.99 | 1.54 / 2.21 | 1.30 / 2.75 |
+| V2_02_medium | 1.31 / 2.05 | 1.31 / 2.05 | 0.88 / 1.15 | 1.02 / 1.50 | 1.14 / 2.18 |
+| V2_03_difficult | fail | 9.99 / 4.52 | 1.61 / 1.52 | 2.26 / 2.12 | 1.51 / 1.81 |
+| mean, 10 seq. all completed | 2.89 / 2.77 | 2.94 / 2.75 | 1.69 / 1.30 | 1.46 / 1.38 | 2.29 / 1.57 |
 
 RPE is the Scaramuzza relative pose error over all 10 m segments (`Code/evaluate.py`'s
 `compute_rpe`): translation drift in %, rotation in degrees.
 
 What it shows:
 - **The C++ sliding window is the most accurate overall.** Its mean is 0.156 m ATE over all
-  11 sequences, against 0.200 m (MSCKF) and 0.217 m (VINS-Fusion). It is best on 6 of 11
-  sequences (MH_01, MH_02, MH_04, MH_05, V1_01, V1_02).
-- **VINS-Fusion is best on V1_03** (0.113 m against 0.194 m for our best). The C++ MSCKF
-  is best on V2_01, V2_02 and V2_03, and the Python filter on MH_03.
-- **The C++ MSCKF matches VINS-Fusion on the first 10 sequences** (0.206 vs 0.207 m), is
-  better on V2_03 (0.149 vs 0.313 m), and needs half of the sliding window's compute.
-- **Python -> C++ MSCKF:** 0.390 -> 0.206 m on the 10 sequences both complete, about 3x
-  faster, and no crash on V2_03.
+  11 sequences, against 0.197 m (MSCKF) and 0.217 m (VINS-Fusion). It is best on 7 of 11
+  sequences (MH_01, MH_02, MH_04, MH_05, V1_01, V1_02, V2_03).
+- **The C++ MSCKF is slightly more accurate than VINS-Fusion** (0.195 vs 0.207 m on the
+  first 10 sequences, 0.197 vs 0.217 m on all 11), with lower translation drift (1.69 vs
+  2.29 %), at half the sliding window's compute. It is best on V2_01 and V2_02.
+- **VINS-Fusion is best on V1_03** (0.113 m against 0.217 m for our best), and the Python
+  filter on MH_03.
+- **Python -> C++ MSCKF:** 0.390 -> 0.195 m on the 10 sequences both complete, 3x faster,
+  and no crash on V2_03.
+- **The differences are not run-to-run noise.** The C++ and Python runs are
+  deterministic. Three VINS-Fusion runs per sequence gave the same ATE to the millimetre
+  on all 11 (single poses differ by up to 2 cm). What a single number does hide is
+  sensitivity: a change that only alters rounding (quirk 8) moved MH_02 by 14 %.
 
 VINS-Fusion trajectories, the summary CSV and the patch set applied to the ROS 2 port
 ([zinuok/VINS-Fusion-ROS2](https://github.com/zinuok/VINS-Fusion-ROS2) @ 72023bc) are in
@@ -333,12 +361,129 @@ All runs use deterministic replay, the start offsets in
 (ROS 2 port, stereo + IMU, loop closure off, upstream EuRoC config) runs on the whole bag
 and is scored on the same time span as ours.
 
-| MH_01, one core, `--threads 1`, compute-3-03 | mean / p95 per frame | real-time factor |
+| MH_01, one core, `--threads 1`, compute-3-03, 5 runs | mean per frame | p95 per frame | real-time factor |
+|---|---|---|---|
+| Python MSCKF | 25.17 ± 0.16 ms | 41.78 ± 0.33 ms | 1.99x |
+| C++ MSCKF, Python behaviour | 8.06 ± 0.01 ms | 10.34 ± 0.00 ms | 6.20x |
+| C++ MSCKF | 8.41 ± 0.01 ms | 11.17 ± 0.02 ms | 5.94x |
+| C++ sliding window | 17.41 ± 0.06 ms | 35.28 ± 0.14 ms | 2.87x |
+
+## Loop closure
+
+![loop closure](results/final/loop_MH_05_difficult.png)
+
+`main_euroc --loop` adds loop closure on top of either back end
+([`include/msckf/loop/`](include/msckf/loop), [`src/loop/`](src/loop)). It never feeds back
+into the VIO: the VIO trajectory stays byte-identical, and loop closure corrects it.
+
+- **Keyframes** every 0.3 m or 15 degrees: ORB features on cam0, triangulated with cam1
+  where a stereo match passes the epipolar check (depth up to 8 m; the baseline is 11 cm).
+- **Candidates** are keyframes at least 20 s older, within 4 m of the current corrected
+  position and looking the same way. There is no appearance-based place recognition (bag
+  of words); this relies on the drift staying below 4 m, which holds on EuRoC.
+- **Verification**: ORB matches from the candidate's 3-D points to the current keyframe,
+  PnP RANSAC refined with Levenberg-Marquardt, at least 40 inliers, and at most 1 m of
+  disagreement with the current pose estimate.
+- **4-DoF pose graph** (x, y, z, yaw, as in VINS-Fusion; roll and pitch come from gravity):
+  edges to the previous 4 keyframes from the VIO (sigma 2 cm / 0.6 degrees) and loop edges
+  (5 cm / 1.1 degrees, Huber loss from 3 sigma), solved with Ceres after each loop.
+- **Output**: `traj_loop.txt` corrects each pose with the loops found up to that moment
+  (online), `traj_loop_final.txt` corrects every pose with the final graph.
+
+| ATE RMSE [m] | MSCKF | MSCKF loop online | MSCKF loop final | SWO | SWO loop online | SWO loop final | VINS-Fusion | VINS-Fusion loop final |
+|---|---|---|---|---|---|---|---|---|
+| MH_01_easy | 0.091 | 0.088 | 0.079 | 0.064 | 0.077 | 0.047 | 0.208 | 0.149 |
+| MH_02_easy | 0.138 | 0.133 | 0.110 | 0.077 | 0.071 | 0.041 | 0.214 | 0.128 |
+| MH_03_medium | 0.225 | 0.124 | 0.101 | 0.230 | 0.119 | 0.115 | 0.313 | 0.124 |
+| MH_04_difficult | 0.414 | 0.452 | 0.236 | 0.256 | 0.225 | 0.141 | 0.439 | 0.279 |
+| MH_05_difficult | 0.414 | 0.423 | 0.143 | 0.179 | 0.211 | 0.097 | 0.312 | 0.306 |
+| V1_01_easy | 0.124 | 0.136 | 0.095 | 0.061 | 0.111 | 0.069 | 0.113 | 0.075 |
+| V1_02_medium | 0.165 | 0.116 | 0.092 | 0.069 | 0.096 | 0.088 | 0.107 | 0.064 |
+| V1_03_difficult | 0.217 | 0.184 | 0.119 | 0.277 | 0.175 | 0.173 | 0.113 | 0.112 |
+| V2_01_easy | 0.077 | 0.072 | 0.052 | 0.102 | 0.094 | 0.053 | 0.131 | 0.050 |
+| V2_02_medium | 0.086 | 0.078 | 0.077 | 0.203 | 0.144 | 0.142 | 0.123 | 0.087 |
+| V2_03_difficult | 0.217 | 0.137 | 0.117 | 0.200 | 0.247 | 0.193 | 0.313 | 0.083 |
+| mean, all 11 | 0.197 | 0.176 | 0.111 | 0.156 | 0.143 | 0.105 | 0.217 | 0.132 |
+
+"Final" for VINS-Fusion is its `vio_loop.csv` after the run: the final pose graph, at
+keyframes only. Ours corrects every frame.
+
+- **With loop closure, both C++ back ends are more accurate than VINS-Fusion with its own
+  loop closure**: mean ATE 0.111 m (MSCKF) and 0.105 m (sliding window) against 0.132 m.
+  The final graph improves on the VIO on 11 of 11 sequences (MSCKF) and 9 of 11 (sliding
+  window; V1_01 and V1_02 get slightly worse). VINS-Fusion is best on 4 of 11 (V1_02,
+  V1_03, V2_01, V2_03).
+- **Online** (each pose corrected as it is published) the gain is smaller: 0.176 m and
+  0.143 m. Poses before a loop cannot be corrected after the fact.
+- **The comparison is not fully like for like**: our candidates come from pose proximity,
+  while VINS-Fusion recognizes places by appearance (DBoW2), which also works after large
+  drift or a restart.
+- **Cost**: 1.9 ms per frame on average in the same thread as the VIO (p95 15.6 ms,
+  max 49 ms when the graph is optimized). About 38 loops per sequence.
+
+How it got there:
+- **The first version made things worse** (MH_01 MSCKF 0.091 -> 0.178 m). Each accepted
+  loop is written to `loops.csv`, and comparing those relative poses with ground truth
+  showed a median translation error of 0.19 m (p90 0.83 m): many wrong loops. Requiring 40
+  instead of 25 inliers, refining PnP, dropping stereo points beyond 8 m and the 1 m gate
+  brought it to 0.036 m.
+- **Equal weights for VIO and loop edges** still let loops pull too hard. Weighting them by
+  their expected error fixed that. A synthetic test (`test/test_loop.cpp`: one lap with
+  1.7 degrees and ~0.2 m of drift, one loop edge) then showed that a Huber loss from
+  1 sigma treats a genuine 4-sigma loop as an outlier and removes only a fifth of the drift.
+  From 3 sigma, the loop removes 45 % of the position and 67 % of the yaw drift. On EuRoC the
+  two settings give similar means (1 sigma: 0.114 / 0.111 m; 3 sigma: 0.111 / 0.105 m).
+- **VINS-Fusion's loop closure was silently broken** in the ROS 2 port. `pubTF` returns
+  on its first line, so the camera-IMU extrinsics are never published, `loop_fusion` uses
+  a zero rotation, its PnP returns NaN, and no loop is ever accepted (MH_01 0.208 m with
+  and without "loop closure"). The patch publishes the extrinsics; it is in
+  [`results/vins/vins_patches.diff`](results/vins/vins_patches.diff).
+
+Run with `LOOP=1 scripts/run_backend_job.sh ...`; table:
+[`scripts/loop_report.py`](scripts/loop_report.py), figure:
+[`scripts/plot_loop.py`](scripts/plot_loop.py).
+
+## Second dataset: TUM-VI
+
+Both back ends on the six TUM-VI room sequences (512 x 512 fisheye stereo at 20 Hz,
+200 Hz IMU, handheld, motion-capture ground truth over the whole run), with the EuRoC
+settings. Only the calibration ([`config/tumvi_mono.yaml`](config/tumvi_mono.yaml)) and the
+start offsets change:
+- **Start offsets.** [`config/tumvi_offsets.csv`](config/tumvi_offsets.csv) comes from the
+  same rule as EuRoC's ([`scripts/find_start_offsets.py`](scripts/find_start_offsets.py)
+  `--moved 0.1`): the quietest second before the camera starts to move. A handheld
+  camera starts slowly, so "moving" means 0.1 m here instead of a MAV's 1 m take-off.
+  With a simpler rule (the quietest gyro second in the first 8 s), room5's static
+  initialization overlapped the start of the motion and the MSCKF diverged.
+- **Sliding window.** Its pixel settings (noise, Huber, outlier and keyframe thresholds)
+  are scaled by the focal length ratio 191 / 458 px, so they mean the same angles as on
+  EuRoC. With the EuRoC pixel values its mean ATE was 0.472 m instead of 0.296 m.
+
+| ATE RMSE [m] | C++ MSCKF | C++ sliding window |
 |---|---|---|
-| Python MSCKF | 25.3 / 42.0 ms | 1.98x |
-| C++ MSCKF, Python behaviour | 8.1 / 10.4 ms | 6.19x |
-| C++ MSCKF | 8.5 / 11.1 ms | 5.89x |
-| C++ sliding window | 17.6 / 35.7 ms | 2.84x |
+| room1 | 0.088 | 0.160 |
+| room2 | 0.214 | 0.237 |
+| room3 | 0.172 | 0.627 |
+| room4 | 0.065 | 0.376 |
+| room5 | 0.116 | 0.152 |
+| room6 | 0.118 | 0.225 |
+| mean | 0.129 | 0.296 |
+
+Run with [`scripts/run_tumvi_job.sh`](scripts/run_tumvi_job.sh) (table:
+[`results/tumvi/ate.csv`](results/tumvi/ate.csv)). There is no VINS-Fusion baseline here:
+its ROS 2 port ships no TUM-VI configuration.
+
+- **The MSCKF carries over well.** It runs all six rooms with EuRoC's filter settings.
+- **The sliding window does not**, and is worse than on EuRoC. A likely reason, not yet
+  tested: the fisheye images cover about 190 degrees, and its reprojection errors are
+  measured on the normalized image plane, which stretches badly towards the border.
+- **Open issue.** On room2 the MSCKF diverged in 2 of about 46 runs with the same
+  configuration (0.214 m in all others). The two runs agree with the others until frame 5,
+  where one measurement update differs. It could not be reproduced on demand: not by
+  repeating the arguments, the node, the environment size, or address-space
+  randomization. AddressSanitizer and UBSan report nothing, and valgrind cannot run on
+  this cluster (no glibc debug symbols). The EuRoC runs have been bit-identical across
+  repetitions.
 
 ## Build
 
@@ -356,17 +501,27 @@ $CONDA_PREFIX/bin/cmake --build cpp/build
 ctest --test-dir cpp/build --output-on-failure
 ```
 
-The 22 unit tests (`test/`) cover:
+The 24 unit tests (`test/`) cover:
 - `math_utils` (8 tests);
 - feature triangulation, including cam0-only observations (4);
 - the sliding-window building blocks: manifold, preintegration bias Jacobians, IMU factor,
   marginalization, analytic vs autodiff Jacobians (5);
 - both back ends end to end on a synthetic trajectory (5): exact features and an unknown
   accelerometer bias, with stereo and half cam0-only observations. A control test checks
-  that the same run without features drifts by more than 1 m.
+  that the same run without features drifts by more than 1 m;
+- the loop-closure pose graph: angle conversions, and one loop edge removing drift (2).
 
-CI builds with Ubuntu 24.04's packages and runs them:
-[`.github/workflows/cpp.yml`](../.github/workflows/cpp.yml).
+CI ([`.github/workflows/cpp.yml`](../.github/workflows/cpp.yml)) builds with Ubuntu 24.04's
+packages and runs the tests on x86-64 and on arm64 (the Jetson's architecture), and builds
+the Docker image.
+
+Docker (Ubuntu 24.04; the image build runs the tests):
+
+```bash
+docker build -t classical-vio -f cpp/Dockerfile .
+docker run --rm -v /path/to/MH_01_easy:/data -v $PWD/out:/out classical-vio \
+    --path /data --config config/euroc_mono.yaml --backend swo --out /out
+```
 
 ROS 2 node (RoboStack Humble in a conda env, no root needed):
 
@@ -390,6 +545,7 @@ DATA=/path/to/MH_01_easy
 
 # C++ (front end + back end); --dump-features saves the front-end output
 ./build/main_euroc --path $DATA --out results/cpp --dump-features
+./build/main_euroc --path $DATA --config config/euroc_mono_prune.yaml --out results/msckf
 ./build/main_euroc --path $DATA --config config/euroc_mono.yaml --backend swo --out results/swo
 
 # Python reference, deterministic (in the Python env)
@@ -400,8 +556,11 @@ python scripts/run_python_reference.py --path $DATA --out results/python
 python scripts/run_python_reference.py --path $DATA --out results/python_replay \
     --features results/python/features_python.txt
 
-# Timing, all methods one after the other on one compute node
+# Timing, all methods one after the other on one compute node; repeat into
+# results/timing_repeats/runN, then summarize (results/timing_summary.md)
 sbatch -c 2 scripts/run_timing_job.sh $DATA
+sbatch -c 2 scripts/run_timing_job.sh $DATA build results/timing_repeats/run1
+python scripts/timing_summary.py
 
 # Phase 1 report: results/summary.md, trajectory and latency plots
 python scripts/compare.py --seq $DATA
@@ -411,8 +570,12 @@ All sequences on SLURM (paths in `config/euroc_offsets.csv`):
 - `scripts/run_sequence_job.sh`: Python + the ablation variants
   (`scripts/run_ablation.sh`, including all fixes but quirk 3);
 - `scripts/run_backend_job.sh BACKEND SEQ OFFSET SEQ_DIR [CONFIG]`: one back end, written
-  to `results/backends/BACKEND` for `euroc_fixed.yaml` and `BACKEND_mono` for
-  `euroc_mono.yaml`.
+  to `results/backends/BACKEND` for `euroc_fixed.yaml`, else `BACKEND_VARIANT` for
+  `euroc_VARIANT.yaml` (e.g. `msckf_mono_prune`).
+
+TUM-VI: download the six `dataset-roomN_512_16` EuRoC-format exports, then
+`python scripts/find_start_offsets.py --moved 0.1 .../dataset-room*_512_16 >
+config/tumvi_offsets.csv` and `sbatch -c 12 scripts/run_tumvi_job.sh`.
 
 Then the reports and plots:
 - `scripts/ablation_table.py` and `scripts/plot_ablation.py`;
@@ -433,6 +596,7 @@ Then the reports and plots:
 | [msckf](src/msckf.cpp) | `msckf.py` | fixed-size vs dynamic Eigen matrices; `conservativeResize`; thin QR; `ldlt().solve` instead of inverses; aliasing (`symmetrize`, `.eval()`) |
 | [image_processor](src/image_processor.cpp) | `image.py` | OpenCV C++ API; a member template (`stereo_match<PointT>`) that mirrors numpy's float32/float64 choice |
 | [main_euroc](src/main_euroc.cpp) | `vio.py` | `std::optional`, `std::chrono::steady_clock` timing |
+| [loop/](src/loop) | - | Ceres `AutoDiffCostFunction` with a templated residual; OpenCV ORB and PnP |
 | [test/](test/) | `Code/test/` | gtest: `TEST`, `EXPECT_NEAR`, seeded random numbers, a synthetic world |
 
 ## Python quirks reproduced on purpose

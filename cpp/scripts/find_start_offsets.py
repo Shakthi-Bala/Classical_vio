@@ -1,17 +1,22 @@
 """
-Pick a start offset for each EuRoC sequence: the filter averages its first 200
-IMU samples (1 s) for gravity and gyro bias, so it must start while the MAV is
-still on the ground. Rule: the quietest 1 s IMU window (lowest acc + gyro
-standard deviation) in the 12 s before ground truth first moves 1 m.
+Pick a start offset for each sequence: both back ends average their first 200
+IMU samples (1 s) for gravity and gyro bias, so they must start while the
+sensor is still. Rule: the quietest 1 s IMU window (lowest acc + gyro standard
+deviation) in the 12 s before ground truth first moves --moved metres, ending
+at least 0.5 s before that.
 
-For MH_01 the rule gives 40.3 s; we keep the 40 s that vio.py used.
+EuRoC (a MAV on the ground, then take-off): --moved 1.0, the default. For MH_01
+the rule gives 40.3 s; we keep the 40 s that vio.py used.
+TUM-VI (handheld, starts moving slowly): --moved 0.1.
 
-Usage: python scripts/find_start_offsets.py SEQ_DIR... > config/euroc_offsets.csv
+Usage: python scripts/find_start_offsets.py [--moved M] SEQ_DIR... > config/X_offsets.csv
 """
+import argparse
 import os
-import sys
 
 import numpy as np
+
+import vio_eval as ve
 
 KEEP = {'MH_01_easy': 40.0}   # offsets fixed by earlier runs
 WINDOW = 200                   # IMU samples = 1 s at 200 Hz (the filters' static init)
@@ -22,14 +27,12 @@ ACC_STD_SCALE = 0.1            # [m/s^2]
 GYRO_STD_SCALE = 0.02          # [rad/s]
 
 
-def start_offset(seq_dir, lookback=12.0):
+def start_offset(seq_dir, moved_m, lookback=12.0):
     imu = np.loadtxt(os.path.join(seq_dir, 'mav0/imu0/data.csv'), delimiter=',', comments='#')
-    gt = np.loadtxt(os.path.join(seq_dir, 'mav0/state_groundtruth_estimate0/data.csv'),
-                    delimiter=',', comments='#')
     t = imu[:, 0] * 1e-9
     gyro, acc = imu[:, 1:4], imu[:, 4:7]
-    t_gt = gt[:, 0] * 1e-9
-    moved = t_gt[np.argmax(np.linalg.norm(gt[:, 1:4] - gt[0, 1:4], axis=1) > 1.0)]
+    t_gt, p_gt, _ = ve.load_gt(seq_dir)
+    moved = t_gt[np.argmax(np.linalg.norm(p_gt - p_gt[0], axis=1) > moved_m)]
 
     best = None
     for i in range(0, len(t) - WINDOW, STEP):
@@ -45,8 +48,13 @@ def start_offset(seq_dir, lookback=12.0):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--moved', type=float, default=1.0,
+                        help='ground-truth displacement that counts as moving [m]')
+    parser.add_argument('seq_dirs', nargs='+')
+    args = parser.parse_args()
     print('sequence,offset_s,path')
-    for seq_dir in sys.argv[1:]:
+    for seq_dir in args.seq_dirs:
         name = os.path.basename(os.path.normpath(seq_dir))
-        offset = KEEP[name] if name in KEEP else start_offset(seq_dir)
+        offset = KEEP[name] if name in KEEP else start_offset(seq_dir, args.moved)
         print(f'{name},{offset},{os.path.abspath(seq_dir)}')

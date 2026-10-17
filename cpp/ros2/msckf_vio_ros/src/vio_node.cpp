@@ -59,11 +59,13 @@ constexpr int64_t kStereoPairToleranceNs = 5'000'000;
 // The full path is re-sent on every publish, so only every Nth pose triggers one.
 constexpr size_t kPathPublishEvery = 10;
 
-double to_seconds(const builtin_interfaces::msg::Time& t) {
-  return static_cast<double>(t.sec) + 1e-9 * static_cast<double>(t.nanosec);
-}
 int64_t to_ns(const builtin_interfaces::msg::Time& t) {
   return static_cast<int64_t>(t.sec) * 1'000'000'000LL + t.nanosec;
+}
+// Same conversion as the offline reader (dataset.cpp): sec + 1e-9 * nanosec
+// rounds differently in the last bit, and the filter amplifies that.
+double to_seconds(const builtin_interfaces::msg::Time& t) {
+  return static_cast<double>(to_ns(t)) * 1e-9;
 }
 
 class VioNode : public rclcpp::Node {

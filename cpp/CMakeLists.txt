@@ -37,6 +37,8 @@ add_library(msckf
   src/swo/imu_preintegration.cpp
   src/swo/marginalization.cpp
   src/swo/sliding_window.cpp
+  src/loop/pose_graph.cpp
+  src/loop/loop_closure.cpp
 )
 target_include_directories(msckf PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set_target_properties(msckf PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -64,6 +66,7 @@ if(MSCKF_BUILD_TESTS)
     test/test_feature.cpp
     test/test_swo.cpp
     test/test_backends.cpp
+    test/test_loop.cpp
   )
   target_link_libraries(msckf_tests PRIVATE msckf GTest::gtest_main)
   include(GoogleTest)
