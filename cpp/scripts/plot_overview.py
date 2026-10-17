@@ -25,26 +25,25 @@ def latency(path, col):
     return x.mean(), np.median(x), np.percentile(x, 95)
 
 
-def mean_ate():
-    """Mean ATE per method over the sequences every method completed
+def mean_ate(methods):
+    """Mean ATE per method over the sequences all `methods` completed
     (results/final/ate_table.csv; empty cells are failures)."""
     rows = list(csv.DictReader(open('results/final/ate_table.csv')))
-    methods = [c for c in rows[0] if c != 'sequence']
     common = [r for r in rows if all(r[m] for m in methods)]
     return {m: float(np.mean([float(r[m]) for r in common])) for m in methods}, len(common)
 
 
 def main():
     # Python: offline per-frame time (front end + back end), it has no ROS node.
-    py = np.genfromtxt('results/python/timing_python.csv', delimiter=',', names=True)
+    py = np.genfromtxt('results/timing/python/timing_python.csv', delimiter=',', names=True)
     py_total = py['frontend_ms'] + py['backend_ms']
     py_lat = (py_total.mean(), np.median(py_total), np.percentile(py_total, 95))
-    ates, n_common = mean_ate()
-    ros = 'results/ros2/MH_01_easy_{}_c303/timing_ros.csv'   # same node for all three
+    ates, n_common = mean_ate(['Python', 'MSCKF', 'SWO', 'VINS-Fusion'])
+    ros = 'results/ros2/MH_01_easy_{}/timing_ros.csv'   # same node as VINS-Fusion's run
     points = [
         # label, ATE column, latency (mean, p50, p95), color, marker, cores, label side
         ('Python MSCKF (offline, no ROS)', 'Python', py_lat, ps.PYTHON, 'o', '1 core', 'left'),
-        ('C++ MSCKF', 'MSCKF fixed', latency(ros.format('msckf'), 'end_to_end_ms'),
+        ('C++ MSCKF', 'MSCKF', latency(ros.format('msckf'), 'end_to_end_ms'),
          ps.CPP_MSCKF, 's', '1 core', 'right'),
         ('C++ sliding window', 'SWO', latency(ros.format('swo'), 'end_to_end_ms'),
          ps.CPP_SWO, 'D', '1 core', 'right'),

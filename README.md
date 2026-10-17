@@ -1,29 +1,35 @@
 # Stereo Visual-Inertial Odometry: Python → C++17 (MSCKF + Ceres sliding window + ROS 2)
 
+[![cpp](https://github.com/Shakthi-Bala/Classical_vio/actions/workflows/cpp.yml/badge.svg?branch=cpp)](https://github.com/Shakthi-Bala/Classical_vio/actions/workflows/cpp.yml)
+
 ![demo](cpp/results/final/demo_mh05.gif)
 
-A stereo MSCKF written in Python, then **rebuilt in C++17** and taken further:
+A stereo MSCKF written in Python, then rebuilt in C++17 and extended:
 
-- **Verified port**: the C++ filter matches the Python to **1e-9 m** on identical input; the
-  front end produces identical features on every frame.
-- **4x faster, 5.8x real time on one core** after profiling (stage timers + sampling
-  profiler + flame graphs; e.g. 10 image-pyramid builds per frame for 3 images became 3).
-- **8 inherited bugs isolated by ablation** on 11 EuRoC sequences: fixing them cuts mean
-  trajectory error **0.615 → 0.249 m** with zero failures.
-- **Ceres sliding-window optimizer** written from scratch (IMU preintegration, inverse-depth
-  stereo landmarks, Schur-complement marginalization, analytic Jacobians, 16 unit tests):
-  the **most accurate** method in the comparison.
-- **ROS 2 node** whose real-time output is identical to the offline run, **9.8 ms
-  end-to-end**; benchmarked against **VINS-Fusion** on the same data and metric.
+- **Port checked against the original.** Fed the same features, the C++ filter matches
+  the Python to 1e-9 m, and the front end produces identical features on every frame.
+- **About 3x faster.** 8.1 ms per frame on one core (6.2x real time) against 25.3 ms for
+  the Python on the same node, after profiling with stage timers, a sampling profiler and
+  flame graphs.
+- **Python quirks measured.** 9 behaviours of the Python code were reproduced on purpose
+  and ablated on 11 EuRoC sequences. The fixes that help cut mean trajectory error from
+  0.615 to 0.249 m.
+- **Ceres sliding-window optimizer** written from scratch: IMU preintegration,
+  inverse-depth landmarks, Schur-complement marginalization, analytic Jacobians.
+- **Robust to stereo loss.** On V2_03, cam0's long exposure blurs the images, so the
+  stereo matches vanish for seconds. Keeping cam0-only tracks takes that sequence from
+  0.68 m (and a diverging sliding window) to 0.15–0.20 m.
+- **ROS 2 node** whose real-time output matches the offline run, benchmarked against
+  VINS-Fusion on the same data and metric. 22 unit tests, run in CI.
 
-| 10 EuRoC sequences | mean ATE | mean RPE @ 10 m | latency / frame |
+| All 11 EuRoC sequences | mean ATE | failures | latency / frame (MH_01) |
 |---|---|---|---|
-| Python MSCKF | 0.390 m | 2.89 % | 35 ms (offline) |
-| **C++ MSCKF** | 0.207 m | 1.68 % | **9.8 ms**, 1 core |
-| **C++ sliding window** | **0.164 m** | **1.47 %** | 19.1 ms, 1 core |
-| VINS-Fusion (no loop closure) | 0.207 m | 2.29 % | 61 ms, 4 cores |
+| Python MSCKF | 0.390 m (10 seq.) | 1 (crash) | 25 ms offline, 1 core |
+| C++ MSCKF | 0.200 m | 0 | 10.7 ms end to end in ROS 2, 1 core |
+| C++ sliding window | 0.156 m | 0 | 19.1 ms end to end in ROS 2, 1 core |
+| VINS-Fusion (no loop closure) | 0.217 m | 0 | 61 ms end to end in ROS 2, 4 cores |
 
-**→ Full write-up, plots and how to reproduce: [`cpp/README.md`](cpp/README.md)**
+**→ Write-up, plots and how to reproduce: [`cpp/README.md`](cpp/README.md)**
 · Code: [`cpp/`](cpp) (C++17) · original Python: [`Code/`](Code)
 
 ---
