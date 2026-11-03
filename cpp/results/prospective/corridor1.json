@@ -1,0 +1,20 @@
+{
+  "protocol_commit": "f41f058",
+  "returncode": 0,
+  "export_recovery": "Re-scored the existing trajectory after a NumPy bool serialization failure; no estimator rerun or change to metric rules.",
+  "status": "completed",
+  "end_segment_rmse_m": 3.5448086934716083,
+  "end_segment_mean_error_m": 3.5441573502241104,
+  "initial_alignment_samples": 516,
+  "end_segment_samples": 503,
+  "end_segment_covered_s": 25.10063624382019,
+  "trajectory_rows": 5970,
+  "full_image_span_s": 299.4592547416687,
+  "reaches_end": true,
+  "gt_segments": 2,
+  "metric": "End-segment translational RMSE after start-segment SE3 alignment, no scale fit; no interpolation across GT gaps. Not full-trajectory ATE.",
+  "development": "EuRoC11 and TUMVI room1\u20136 already used; corridor1 is one prospectively chosen sequence relative to available records, not an externally audited blind study.",
+  "frozen_inputs_unchanged": true,
+  "trajectory_sha256": "8919e275ab5876aa4e18b799aadf4d56ad17cdd9cc043ad47b2d5a848a0fead6",
+  "ground_truth_sha256": "bde26d7ceb15cb69f3a38cbcad53032025ab3be2c59d43fc06f245af00e3fc06"
+}
