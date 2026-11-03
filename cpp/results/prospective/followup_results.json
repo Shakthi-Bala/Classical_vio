@@ -1,0 +1,107 @@
+{
+  "protocol_commits": [
+    "24e6741",
+    "c544370"
+  ],
+  "source_commit": "24e6741",
+  "test_set": [
+    "corridor2",
+    "slides1"
+  ],
+  "rows": [
+    {
+      "backend": "msckf",
+      "configuration": "tumvi_mono_prune.yaml",
+      "returncode": 0,
+      "end_segment_rmse_m": 0.8137467508978535,
+      "end_segment_mean_error_m": 0.8125599110079919,
+      "start_alignment_samples": 662,
+      "end_segment_samples": 739,
+      "end_segment_covered_s": 37.250638246536255,
+      "trajectory_rows": 6752,
+      "gt_segments": 2,
+      "reaches_end": true,
+      "metric": "End-segment translational RMSE after start-only SE3 alignment; no scale fit or interpolation across missing GT; not full-trajectory ATE",
+      "trajectory_sha256": "e9d515b37e3de0dc44a166ed2c88314271d825e43f3204da7bcb2382e8f08055",
+      "ground_truth_sha256": "48abc52d8bc3b63dd591d8ba30db1f3e3d3c146c9302514145567b544256819e",
+      "status": "completed",
+      "frozen_inputs_unchanged": true,
+      "sequence": "corridor2"
+    },
+    {
+      "backend": "swo",
+      "configuration": "tumvi_mono.yaml",
+      "returncode": 0,
+      "end_segment_rmse_m": 2.6349640201440034,
+      "end_segment_mean_error_m": 2.6334033647614175,
+      "start_alignment_samples": 662,
+      "end_segment_samples": 739,
+      "end_segment_covered_s": 37.250638246536255,
+      "trajectory_rows": 6752,
+      "gt_segments": 2,
+      "reaches_end": true,
+      "metric": "End-segment translational RMSE after start-only SE3 alignment; no scale fit or interpolation across missing GT; not full-trajectory ATE",
+      "trajectory_sha256": "9c49a0114dd1ca7b52f6c0c76c07cca258d0ff7714cd3286fb8d114b3f378db2",
+      "ground_truth_sha256": "48abc52d8bc3b63dd591d8ba30db1f3e3d3c146c9302514145567b544256819e",
+      "status": "completed",
+      "frozen_inputs_unchanged": true,
+      "sequence": "corridor2"
+    },
+    {
+      "backend": "msckf",
+      "configuration": "tumvi_mono_prune.yaml",
+      "returncode": 0,
+      "end_segment_rmse_m": 3.464444127212777,
+      "end_segment_mean_error_m": 3.463443045424192,
+      "start_alignment_samples": 1138,
+      "end_segment_samples": 946,
+      "end_segment_covered_s": 47.25162744522095,
+      "trajectory_rows": 5561,
+      "gt_segments": 3,
+      "reaches_end": true,
+      "metric": "End-segment translational RMSE after start-only SE3 alignment; no scale fit or interpolation across missing GT; not full-trajectory ATE",
+      "trajectory_sha256": "9095a8cd9acc411f89737ca60d387c8a9a503d281f1208a76271538b5a0871af",
+      "ground_truth_sha256": "31ed29fdaea4ca2d2617be7f7d23eaf16bc297839b4063f06fcdbe56216682a1",
+      "status": "completed",
+      "frozen_inputs_unchanged": true,
+      "sequence": "slides1"
+    },
+    {
+      "backend": "swo",
+      "configuration": "tumvi_mono.yaml",
+      "returncode": 0,
+      "end_segment_rmse_m": 4.903797367409371,
+      "end_segment_mean_error_m": 4.902656640839935,
+      "start_alignment_samples": 1138,
+      "end_segment_samples": 946,
+      "end_segment_covered_s": 47.25162744522095,
+      "trajectory_rows": 5561,
+      "gt_segments": 3,
+      "reaches_end": true,
+      "metric": "End-segment translational RMSE after start-only SE3 alignment; no scale fit or interpolation across missing GT; not full-trajectory ATE",
+      "trajectory_sha256": "5b7da77f2e1741e84e8ed5bad580d74ac2488862ebe775872f29404a03d985d1",
+      "ground_truth_sha256": "31ed29fdaea4ca2d2617be7f7d23eaf16bc297839b4063f06fcdbe56216682a1",
+      "status": "completed",
+      "frozen_inputs_unchanged": true,
+      "sequence": "slides1"
+    }
+  ],
+  "aggregate": {
+    "msckf": {
+      "predefined_sequences": 2,
+      "completed": 2,
+      "not_completed": 0,
+      "mean_of_two_end_segment_rmse_m": 2.1390954390553154,
+      "aggregation": "Unweighted mean of the two predefined end-segment translational RMSE values; no successes-only mean"
+    },
+    "swo": {
+      "predefined_sequences": 2,
+      "completed": 2,
+      "not_completed": 0,
+      "mean_of_two_end_segment_rmse_m": 3.7693806937766876,
+      "aggregation": "Unweighted mean of the two predefined end-segment translational RMSE values; no successes-only mean"
+    }
+  },
+  "original_and_executed_frozen_inputs_unchanged": true,
+  "scope": "Two prospectively selected sequences relative to inspected records, no retuning; partial-GT end-segment RMSE after start-only SE3 alignment. Not full-trajectory ATE, comparable to the tuned EuRoC mean, or an externally audited blind study."
+}

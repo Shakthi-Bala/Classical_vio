@@ -80,6 +80,11 @@ specified follow-up; a protocol alone is not a successful evaluation result.
 The [completed corridor1 record](docs/corridor1_result.md) reports 3.545 m
 end-segment RMSE after start-only alignment. This single partial-GT result does
 not establish low-drift generalization or replace the tuned EuRoC accuracy table.
+The subsequent [frozen corridor2/slides1 follow-up](docs/followup_results.md)
+tested both configured back ends: Ceres 2.635/4.904 m and MSCKF 0.814/3.464 m
+end-segment RMSE, with 2/2 sequences completed for each. All settings and scoring
+were fixed before acquiring either sequence. This limited test found higher end
+error for Ceres on both sequences; it does not establish broad generalization.
 
 ![latency](results/latency.png)
 

@@ -49,6 +49,14 @@ method completes; the Python crashes on V2_03.*
 </tr>
 </table>
 
+**Evaluation scope.** EuRoC and the six TUM-VI room runs informed development;
+they are not blind-test results. A [prospectively frozen two-sequence follow-up](cpp/docs/followup_results.md)
+evaluated both back ends on corridor2 and slides1 without retuning. Ceres
+end-segment RMSE was 2.635/4.904 m versus MSCKF's 0.814/3.464 m. Both methods
+completed both sequences. These partial-ground-truth, start-aligned errors are
+not comparable to the full-trajectory-aligned EuRoC ATE table, and the Ceres
+backend did not improve the configured MSCKF's end error on these two tests.
+
 **→ Write-up, plots and how to reproduce: [`cpp/README.md`](cpp/README.md)**
 
 | Directory | Contents |
