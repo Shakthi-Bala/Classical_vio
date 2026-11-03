@@ -24,7 +24,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build g++ libeigen3-dev libopencv-dev libceres-dev \
-            libyaml-cpp-dev libboost-dev libgtest-dev
+            libyaml-cpp-dev libboost-dev libgtest-dev \
+            python3-numpy python3-scipy python3-matplotlib
+
+      - name: Check partial-ground-truth scoring
+        working-directory: cpp
+        run: python3 -m unittest discover -s test -p test_prospective_eval.py
 
       - name: Configure
         run: cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
