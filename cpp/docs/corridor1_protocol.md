@@ -13,7 +13,7 @@ sequence check relative to those records, not an externally audited blind study.
   previously used TUM camera calibration. This does not claim zero adaptation from
   EuRoC: calibration, initialization and SWO camera-scale settings have already
   been investigated on TUM-VI room data.
-- Test data: only official `dataset-corridor1_512_16.tar`. Download at most 3 GiB.
+- Test data: only official `dataset-corridor1_512_16.tar`. Download at most 4 GiB.
   The sequence is selected before seeing outputs. No sequence replacement.
 - Execution: MSCKF, one core, offset **0 s**, full sequence, no loop closure.
   Do not use motion-capture labels to choose an initialization offset. Report an
@@ -33,3 +33,10 @@ sequence check relative to those records, not an externally audited blind study.
 
 Dataset source and GT coverage:
 https://cvg.cit.tum.de/data/datasets/visual-inertial-dataset
+
+Resource amendment before data access: the server's Content-Length was
+3,518,935,040 bytes, exceeding the original 3 GiB cap. The downloader stopped
+before transferring the archive or executing the estimator. Raise the transfer cap
+to 4 GiB for that same sequence; retain the original manifest and failure. Estimator,
+configuration, offset, alignment and scoring rules remain unchanged. This is a
+download-resource amendment, not an additional estimator trial or a tuning round.
