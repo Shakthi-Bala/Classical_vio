@@ -77,6 +77,9 @@ reported below. The six TUM-VI room runs also informed initialization and
 camera-scale adjustments. Neither set is a newly frozen blind test. See the
 [prospective corridor1 protocol](docs/corridor1_protocol.md) for a separately
 specified follow-up; a protocol alone is not a successful evaluation result.
+The [completed corridor1 record](docs/corridor1_result.md) reports 3.545 m
+end-segment RMSE after start-only alignment. This single partial-GT result does
+not establish low-drift generalization or replace the tuned EuRoC accuracy table.
 
 ![latency](results/latency.png)
 
