@@ -29,7 +29,7 @@ jobs:
 
       - name: Check partial-ground-truth scoring
         working-directory: cpp
-        run: python3 -m unittest discover -s test -p test_prospective_eval.py
+        run: /usr/bin/python3 -m unittest discover -s test -p test_prospective_eval.py
 
       - name: Configure
         run: cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
