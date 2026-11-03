@@ -63,6 +63,21 @@ The C++ runs on one core (`--threads 1`). Over 5 runs the per-frame mean is
 ([`results/timing_summary.md`](results/timing_summary.md)). The trajectories are
 identical in every run: the replay is deterministic.
 
+**Timing boundary.** The 3.1x comparison sums the timed stereo-image front end
+and the MSCKF feature-update callback. Both run from images (the timing job does
+not pass `--features`); this is not a filter-only feature replay. The timers exclude
+image loading, the separate IMU callbacks before each image, trajectory/feature-file
+output, ROS transport, sensor acquisition and control. Consequently, 25.17/8.06 ms
+are processing times inside deterministic offline replay, not full-estimator wall
+time or sensor-to-control latency. The separate `--features` mode is used for
+back-end parity checks, not this speed comparison.
+
+**Evaluation split.** EuRoC settings were selected using the same 11 sequences
+reported below. The six TUM-VI room runs also informed initialization and
+camera-scale adjustments. Neither set is a newly frozen blind test. See the
+[prospective corridor1 protocol](docs/corridor1_protocol.md) for a separately
+specified follow-up; a protocol alone is not a successful evaluation result.
+
 ![latency](results/latency.png)
 
 Parity:
